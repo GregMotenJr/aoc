@@ -5,7 +5,6 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
   chmodSync,
   readdirSync,
@@ -13,10 +12,11 @@ import {
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(__dirname, '..');
+const IS_WINDOWS = platform() === 'win32';
 
 const GREEN = '\x1b[0;32m';
 const YELLOW = '\x1b[0;33m';
@@ -39,12 +39,39 @@ function ask(prompt: string): Promise<string> {
   });
 }
 
+/** Run a command via shell (works on Windows + Linux/macOS) */
+function run(
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; stdio?: 'inherit' | 'pipe' } = {},
+): { status: number | null; stdout: string } {
+  const result = spawnSync(cmd, args, {
+    cwd: opts.cwd,
+    stdio: opts.stdio ?? 'inherit',
+    shell: true, // Required for Windows (.cmd wrappers like npm)
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout?.toString().trim() ?? '',
+  };
+}
+
+/** Silently check if a command exists */
+function commandExists(cmd: string): boolean {
+  try {
+    const check = IS_WINDOWS ? `where ${cmd}` : `command -v ${cmd}`;
+    execSync(check, { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Template files to copy into new project ─────
 const TEMPLATE_FILES = [
   'src',
   'scripts',
   'tests',
-  'package.json',
   'tsconfig.json',
   'vitest.config.ts',
   '.env.example',
@@ -86,12 +113,9 @@ ${BOLD}╔═══════════════════════�
   }
   ok(`Node.js ${process.version}`);
 
-  let hasClaude = false;
-  try {
-    execSync('claude --version 2>/dev/null', { encoding: 'utf-8' });
-    hasClaude = true;
+  if (commandExists('claude')) {
     ok('Claude CLI installed');
-  } catch {
+  } else {
     warn('Claude CLI not found — install later with: npm i -g @anthropic-ai/claude-code');
   }
 
@@ -99,11 +123,11 @@ ${BOLD}╔═══════════════════════�
 
   console.log(`\n${BOLD}Creating project in ${projectName}/...${RESET}\n`);
 
+  // Copy template files from the installed package
   for (const item of TEMPLATE_FILES) {
     const src = join(PACKAGE_ROOT, item);
     const dest = join(projectDir, item);
     if (!existsSync(src)) continue;
-
     cpSync(src, dest, { recursive: true, force: false });
   }
 
@@ -111,7 +135,7 @@ ${BOLD}╔═══════════════════════�
   mkdirSync(join(projectDir, 'store'), { recursive: true });
   mkdirSync(join(projectDir, 'workspace', 'uploads'), { recursive: true });
 
-  // Write a fresh package.json for the user's project (not the CLI package.json)
+  // Write a fresh package.json for the user's project
   const userPackageJson = {
     name: projectName,
     version: '1.0.0',
@@ -157,12 +181,18 @@ ${BOLD}╔═══════════════════════�
 
   console.log(`\n${BOLD}Installing dependencies...${RESET}\n`);
 
-  const installResult = spawnSync('npm', ['install', '--no-fund', '--no-audit'], {
+  const installResult = run('npm', ['install', '--no-fund', '--no-audit'], {
     cwd: projectDir,
-    stdio: 'inherit',
   });
 
   if (installResult.status !== 0) {
+    console.log('');
+    if (IS_WINDOWS) {
+      console.log(`${YELLOW}Tip:${RESET} If better-sqlite3 failed to build, you may need build tools.`);
+      console.log('  Run this in an Administrator PowerShell and try again:');
+      console.log(`  ${BOLD}npm install -g windows-build-tools${RESET}`);
+      console.log('');
+    }
     fail('npm install failed — check errors above');
   }
   ok('Dependencies installed');
@@ -214,25 +244,23 @@ LOG_LEVEL=info
 NODE_ENV=production
 `;
 
-  writeFileSync(join(projectDir, '.env'), envContent);
-  chmodSync(join(projectDir, '.env'), 0o600);
+  const envPath = join(projectDir, '.env');
+  writeFileSync(envPath, envContent);
+  try { chmodSync(envPath, 0o600); } catch { /* chmod not supported on Windows */ }
   ok('.env configured');
 
   // ─── Step 5: Build ─────────────────────────────
 
   console.log(`\n${BOLD}Building...${RESET}\n`);
 
-  const buildResult = spawnSync('npm', ['run', 'build'], {
-    cwd: projectDir,
-    stdio: 'inherit',
-  });
+  const buildResult = run('npm', ['run', 'build'], { cwd: projectDir });
 
   if (buildResult.status !== 0) {
     fail('Build failed — check errors above');
   }
   ok('TypeScript compiled');
 
-  // ─── Step 6: systemd service (Linux) ────────────
+  // ─── Step 6: systemd service (Linux only) ───────
 
   let systemdOk = false;
   if (process.platform === 'linux') {
@@ -277,6 +305,11 @@ WantedBy=default.target
 
   // ─── Done ──────────────────────────────────────
 
+  const startCmd = systemdOk ? 'systemctl --user start aos' : 'npm start';
+  const restartNote = systemdOk
+    ? `  4. Restart:  ${BOLD}systemctl --user restart aos${RESET}`
+    : `  4. Restart the bot (Ctrl+C, then npm start)`;
+
   console.log(`
 ${BOLD}${GREEN}═══════════════════════════════════════${RESET}
 ${BOLD}${GREEN}  AOS is ready!${RESET}
@@ -285,36 +318,22 @@ ${BOLD}${GREEN}═════════════════════�
   ${BOLD}Next steps:${RESET}
 
   ${BOLD}cd ${projectName}${RESET}
+
+  1. Start:    ${BOLD}${startCmd}${RESET}
+  2. Send ${BOLD}/chatid${RESET} to your bot on Telegram
+  3. Add the ID to .env: ${BOLD}ALLOWED_CHAT_ID=<your_id>${RESET}
+${restartNote}
+  5. Customize ${BOLD}CLAUDE.md${RESET} with your AI's personality
+  6. Send a message — you're live!
 `);
-
-  if (systemdOk) {
-    console.log(`  1. Start:    ${BOLD}systemctl --user start aos${RESET}`);
-  } else {
-    console.log(`  1. Start:    ${BOLD}npm start${RESET}`);
-  }
-
-  console.log(`  2. Send ${BOLD}/chatid${RESET} to your bot on Telegram`);
-  console.log(`  3. Add the ID to .env: ${BOLD}ALLOWED_CHAT_ID=<your_id>${RESET}`);
-
-  if (systemdOk) {
-    console.log(`  4. Restart:  ${BOLD}systemctl --user restart aos${RESET}`);
-  } else {
-    console.log(`  4. Restart the bot (Ctrl+C, then npm start)`);
-  }
-
-  console.log(`  5. Customize ${BOLD}CLAUDE.md${RESET} with your AI's personality`);
-  console.log(`  6. Send a message — you're live!`);
-  console.log('');
 }
 
 function start(): void {
-  // Check if we're in a project directory
   const distIndex = join(process.cwd(), 'dist', 'index.js');
   if (!existsSync(distIndex)) {
-    // Try building first
     if (existsSync(join(process.cwd(), 'src', 'index.ts'))) {
       console.log('Building first...');
-      spawnSync('npm', ['run', 'build'], { cwd: process.cwd(), stdio: 'inherit' });
+      run('npm', ['run', 'build'], { cwd: process.cwd() });
     } else {
       fail('Not in an AOS project directory. Run "aos init" to create one first.');
     }
@@ -323,6 +342,7 @@ function start(): void {
   spawnSync('node', ['dist/index.js'], {
     cwd: process.cwd(),
     stdio: 'inherit',
+    shell: true,
   });
 }
 
@@ -332,10 +352,7 @@ function status(): void {
     fail('Not in an AOS project directory. Run "aos init" to create one first.');
   }
 
-  spawnSync('npx', ['tsx', statusScript], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  });
+  run('npx', ['tsx', statusScript], { cwd: process.cwd() });
 }
 
 function printHelp(): void {
