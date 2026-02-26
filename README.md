@@ -231,6 +231,19 @@ Everything else is identical.
 - **PID lock** — Prevents duplicate instances; auto-kills stale processes
 - **Service hardening** — Linux: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp` via systemd; macOS: sandboxed launchd agent; Windows: elevated Task Scheduler with restricted scope
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — branching, Conventional Commits, PR process, and how to cut a release.
+
+**Quick rules:**
+- All work goes through a PR (`dev → main`)
+- PR titles must follow [Conventional Commits](https://www.conventionalcommits.org/) (CI enforces this)
+- `feat` → minor bump · `fix` / `perf` → patch bump · `feat!` / `BREAKING CHANGE` → major bump
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
 ## License
 
 MIT
