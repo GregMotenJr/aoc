@@ -179,7 +179,7 @@ try {
     $action   = New-ScheduledTaskAction -Execute $nodePath -Argument $scriptPath -WorkingDirectory $ProjectRoot
     $trigger  = New-ScheduledTaskTrigger -AtLogon
     $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited
 
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
       -Settings $settings -Principal $principal -Force | Out-Null
@@ -200,7 +200,7 @@ if ($serviceOk) {
   try {
     $hbScript  = Join-Path $ProjectRoot "scripts\heartbeat.ps1"
     $hbAction  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NonInteractive -File `"$hbScript`""
-    $hbTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 10) -Once -At (Get-Date)
+    $hbTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 9999) -Once -At (Get-Date)
     Register-ScheduledTask -TaskName "AOS-Heartbeat" -Action $hbAction -Trigger $hbTrigger -Force | Out-Null
     ok "Heartbeat monitor registered (checks every 10 minutes)"
   } catch {

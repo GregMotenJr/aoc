@@ -209,8 +209,8 @@ Heartbeat runs via crontab (added automatically by the installer).
 ```powershell
 Start-ScheduledTask  -TaskName "AOS-Alfred"
 Stop-ScheduledTask   -TaskName "AOS-Alfred"
-# Logs
-Get-Content "$ProjectRoot\store\aos.log" -Wait
+# Logs (replace C:\path\to\aos with your actual install directory)
+Get-Content "C:\path\to\aos\store\aos.log" -Wait
 ```
 
 Heartbeat runs as a separate scheduled task (`AOS-Heartbeat`, every 10 min).

@@ -232,7 +232,6 @@ EOF
     ok "launchd service installed and loaded (auto-starts on login)"
     SERVICE_OK=1
     SERVICE_START="launchctl start com.aos.bot"
-    SERVICE_STOP="launchctl stop com.aos.bot"
     SERVICE_RESTART="launchctl stop com.aos.bot && launchctl start com.aos.bot"
   else
     warn "Could not load launchd service (non-critical)"
@@ -271,7 +270,6 @@ EOF
     ok "systemd service installed and enabled (auto-starts on login)"
     SERVICE_OK=1
     SERVICE_START="systemctl --user start aos"
-    SERVICE_STOP="systemctl --user stop aos"
     SERVICE_RESTART="systemctl --user restart aos"
   else
     warn "Could not set up systemd service (non-critical)"

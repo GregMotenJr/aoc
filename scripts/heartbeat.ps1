@@ -10,10 +10,10 @@ function log { param($msg) Add-Content -Path $LogFile -Value "$(Get-Date -Format
 
 # Check if PID file exists and process is alive
 if (Test-Path $PidFile) {
-  $pid = Get-Content $PidFile -Raw
-  $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+  $aosPid = (Get-Content $PidFile -Raw).Trim()
+  $proc   = Get-Process -Id $aosPid -ErrorAction SilentlyContinue
   if ($proc) { exit 0 }  # Still running — all good
-  log "WARN: Stale PID $pid — process not running"
+  log "WARN: Stale PID $aosPid — process not running"
 } else {
   log "WARN: No PID file found"
 }
@@ -30,5 +30,9 @@ try {
   $node    = (Get-Command node).Source
   $script  = Join-Path $ProjectRoot "dist\index.js"
   $process = Start-Process -FilePath $node -ArgumentList $script -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden
+
+  # Write PID so future heartbeats can find the process
+  $process.Id | Set-Content -Path $PidFile -Encoding UTF8
+
   log "OK: AOS started directly (PID $($process.Id))"
 }
