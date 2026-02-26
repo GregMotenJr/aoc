@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawnSync, spawn } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -8,6 +8,9 @@ import {
   writeFileSync,
   chmodSync,
   readdirSync,
+  readFileSync,
+  unlinkSync,
+  openSync,
 } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
@@ -328,31 +331,180 @@ ${restartNote}
 `);
 }
 
-function start(): void {
-  const distIndex = join(process.cwd(), 'dist', 'index.js');
+function getProjectDir(): string {
+  const cwd = process.cwd();
+  const pidFile = join(cwd, 'store', 'aos.pid');
+  const distIndex = join(cwd, 'dist', 'index.js');
+
   if (!existsSync(distIndex)) {
-    if (existsSync(join(process.cwd(), 'src', 'index.ts'))) {
-      console.log('Building first...');
-      run('npm', ['run', 'build'], { cwd: process.cwd() });
-    } else {
-      fail('Not in an AOS project directory. Run "aos init" to create one first.');
+    if (existsSync(join(cwd, 'src', 'index.ts'))) {
+      return cwd;
     }
-  }
-
-  spawnSync('node', ['dist/index.js'], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    shell: true,
-  });
-}
-
-function status(): void {
-  const statusScript = join(process.cwd(), 'scripts', 'status.ts');
-  if (!existsSync(statusScript)) {
     fail('Not in an AOS project directory. Run "aos init" to create one first.');
   }
 
-  run('npx', ['tsx', statusScript], { cwd: process.cwd() });
+  return cwd;
+}
+
+function getPid(): number | null {
+  const projectDir = getProjectDir();
+  const pidFile = join(projectDir, 'store', 'aos.pid');
+
+  try {
+    const content = readFileSync(pidFile, 'utf-8').trim();
+    const pid = parseInt(content, 10);
+    if (isNaN(pid)) return null;
+
+    // Verify process still exists
+    try {
+      process.kill(pid, 0);
+      return pid;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function start(): void {
+  const projectDir = getProjectDir();
+  const distIndex = join(projectDir, 'dist', 'index.js');
+
+  if (!existsSync(distIndex)) {
+    console.log('Building first...');
+    run('npm', ['run', 'build'], { cwd: projectDir });
+  }
+
+  console.log(`Starting AOS from ${projectDir}...`);
+
+  // Check if already running
+  const existingPid = getPid();
+  if (existingPid) {
+    warn(`AOS is already running (PID ${existingPid})`);
+    process.exit(0);
+  }
+
+  // Ensure store directory exists
+  const storeDir = join(projectDir, 'store');
+  mkdirSync(storeDir, { recursive: true });
+
+  // Start as background process
+  const logFile = join(storeDir, 'aos.log');
+  const errorFile = join(storeDir, 'aos.error.log');
+  
+  const logFd = openSync(logFile, 'a');
+  const errorFd = openSync(errorFile, 'a');
+
+  const child = spawn('node', [distIndex], {
+    cwd: projectDir,
+    detached: true,
+    stdio: ['ignore', logFd, errorFd],
+  });
+
+  writeFileSync(join(storeDir, 'aos.pid'), String(child.pid));
+  child.unref();
+
+  ok(`AOS started (PID ${child.pid})`);
+  console.log(`Logs: tail -f ${logFile}`);
+}
+
+function stop(): void {
+  const projectDir = getProjectDir();
+  const pid = getPid();
+
+  if (!pid) {
+    warn('AOS is not running');
+    process.exit(0);
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+    ok(`Stopped AOS (PID ${pid})`);
+
+    // Clean up PID file
+    const pidFile = join(projectDir, 'store', 'aos.pid');
+    try {
+      unlinkSync(pidFile);
+    } catch {
+      // Ignore
+    }
+  } catch (err) {
+    fail(`Could not stop process: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function logs(): void {
+  const projectDir = getProjectDir();
+  const logFile = join(projectDir, 'store', 'aos.log');
+
+  if (!existsSync(logFile)) {
+    warn('No logs yet');
+    process.exit(0);
+  }
+
+  console.log(`Following logs from ${logFile}. Press Ctrl+C to stop.\n`);
+
+  if (IS_WINDOWS) {
+    // Use PowerShell to tail on Windows
+    spawnSync('powershell', ['-Command', `Get-Content "${logFile}" -Wait`], { stdio: 'inherit' });
+  } else {
+    // Use tail on Unix-like systems
+    spawnSync('tail', ['-f', logFile], { stdio: 'inherit' });
+  }
+}
+
+function update(): void {
+  const projectDir = getProjectDir();
+
+  console.log('Pulling latest changes from git...');
+  const pullResult = run('git', ['pull'], { cwd: projectDir, stdio: 'inherit' });
+  if (pullResult.status !== 0) {
+    fail('Git pull failed');
+  }
+
+  console.log('Installing dependencies...');
+  const installResult = run('npm', ['install'], { cwd: projectDir, stdio: 'inherit' });
+  if (installResult.status !== 0) {
+    fail('npm install failed');
+  }
+
+  console.log('Building...');
+  const buildResult = run('npm', ['run', 'build'], { cwd: projectDir, stdio: 'inherit' });
+  if (buildResult.status !== 0) {
+    fail('Build failed');
+  }
+
+  ok('Update complete');
+  console.log('Restarting AOS...');
+  stop();
+  start();
+}
+
+function status(): void {
+  const projectDir = getProjectDir();
+  const pid = getPid();
+  const logFile = join(projectDir, 'store', 'aos.log');
+
+  console.log(`\n${BOLD}AOS Status${RESET}\n`);
+
+  if (pid) {
+    console.log(`${GREEN}●${RESET} Running (PID ${pid})`);
+  } else {
+    console.log(`${YELLOW}●${RESET} Not running`);
+  }
+
+  // Show last 10 log lines
+  if (existsSync(logFile)) {
+    const content = readFileSync(logFile, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+    const lastLines = lines.slice(-10);
+
+    console.log(`\n${BOLD}Last 10 log lines:${RESET}\n`);
+    lastLines.forEach((line) => console.log('  ' + line));
+  }
+
+  console.log();
 }
 
 function printHelp(): void {
@@ -363,13 +515,19 @@ Personal AI assistant powered by Claude Code
 ${BOLD}Usage:${RESET}
   aos init [directory]   Create a new AOS project
   aos start              Start the bot (from project directory)
-  aos status             Health check (from project directory)
+  aos stop               Stop the running bot
+  aos status             Show PID + last 10 log lines
+  aos logs               Tail live logs
+  aos update             Git pull + rebuild + restart
   aos help               Show this message
 
 ${BOLD}Quick start:${RESET}
   aos init my-assistant
   cd my-assistant
   aos start
+  # Then send /chatid to your bot on Telegram
+  # Add the ID to .env: ALLOWED_CHAT_ID=<your_id>
+  aos stop
 
 ${BOLD}More info:${RESET}
   https://github.com/GregMotenJr/aoc
@@ -392,8 +550,17 @@ switch (command) {
   case 'run':
     start();
     break;
+  case 'stop':
+    stop();
+    break;
+  case 'logs':
+    logs();
+    break;
   case 'status':
     status();
+    break;
+  case 'update':
+    update();
     break;
   case 'help':
   case '--help':

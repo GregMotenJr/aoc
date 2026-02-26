@@ -22,16 +22,6 @@ warn() { echo -e "${YELLOW}⚠${RESET} $1"; }
 fail() { echo -e "${RED}✗${RESET} $1"; exit 1; }
 ask()  { read -rp "$1" REPLY </dev/tty; echo "$REPLY"; }
 
-# Resolve project root — BASH_SOURCE[0] is empty when piped via curl | bash,
-# so fall back to $0 (also empty in that case) then pwd.
-_BASH_SOURCE="${BASH_SOURCE[0]:-}"
-if [ -n "$_BASH_SOURCE" ]; then
-  PROJECT_ROOT="$(cd "$(dirname "$_BASH_SOURCE")" && pwd)"
-else
-  PROJECT_ROOT="$(pwd)"
-fi
-cd "$PROJECT_ROOT"
-
 # ─── Detect OS ────────────────────────────────────
 
 detect_os() {
@@ -101,15 +91,81 @@ else
   fi
 fi
 
-# ─── Step 2: Install dependencies ─────────────────
+# ─── Step 2: Determine install location ───────────
+
+INSTALL_DIR="$HOME/.local/share/aos"
+BIN_DIR="$HOME/.local/bin"
+
+echo ""
+echo "Install location: $INSTALL_DIR"
+echo ""
+
+# ─── Step 3: Clone or copy repo ────────────────────
+
+echo -e "${BOLD}Setting up project...${RESET}"
+echo ""
+
+if [ -d "$INSTALL_DIR" ]; then
+  echo "  Existing AOS installation found."
+  ANSWER=$(ask "  Reinstall? (y/N): ")
+  if [[ ! "$ANSWER" =~ ^[Yy] ]]; then
+    ok "Keeping existing installation"
+    SKIP_CLONE=1
+  else
+    rm -rf "$INSTALL_DIR"
+    SKIP_CLONE=0
+  fi
+else
+  SKIP_CLONE=0
+fi
+
+if [ "$SKIP_CLONE" = "0" ]; then
+  mkdir -p "$INSTALL_DIR"
+  
+  if command -v git &>/dev/null; then
+    git clone --branch dev https://github.com/GregMotenJr/aoc.git "$INSTALL_DIR" 2>/dev/null || {
+      echo "  Git clone failed. Downloading instead..." >&2
+      SKIP_CLONE=-1
+    }
+  else
+    SKIP_CLONE=-1
+  fi
+
+  if [ "$SKIP_CLONE" = "-1" ]; then
+    # Download zip and extract
+    ZIP_URL="https://github.com/GregMotenJr/aoc/archive/refs/heads/dev.zip"
+    ZIP_FILE="/tmp/aoc-dev.zip"
+    
+    if command -v curl &>/dev/null; then
+      curl -fsSL "$ZIP_URL" -o "$ZIP_FILE"
+    elif command -v wget &>/dev/null; then
+      wget -q "$ZIP_URL" -O "$ZIP_FILE"
+    else
+      fail "Neither curl nor wget available. Please install one and try again."
+    fi
+    
+    if command -v unzip &>/dev/null; then
+      unzip -q "$ZIP_FILE" -d /tmp
+      mv /tmp/aoc-dev/* "$INSTALL_DIR/"
+      rm -f "$ZIP_FILE"
+    else
+      fail "unzip not found. Please install it and try again."
+    fi
+  fi
+
+  ok "Repository cloned/extracted"
+fi
+
+# ─── Step 4: Install dependencies ─────────────────
 
 echo ""
 echo -e "${BOLD}Installing dependencies...${RESET}"
 echo ""
+cd "$INSTALL_DIR"
 npm install --no-fund --no-audit
 ok "Dependencies installed"
 
-# ─── Step 3: Configure .env ───────────────────────
+# ─── Step 5: Configure .env ───────────────────────
 
 echo ""
 echo -e "${BOLD}Configuration${RESET}"
@@ -181,7 +237,7 @@ EOF
   ok ".env configured"
 fi
 
-# ─── Step 4: Build ────────────────────────────────
+# ─── Step 6: Build ────────────────────────────────
 
 echo ""
 echo -e "${BOLD}Building...${RESET}"
@@ -189,123 +245,55 @@ echo ""
 npm run build
 ok "TypeScript compiled"
 
-# ─── Step 5: Background service ───────────────────
+# ─── Step 7: Create global aos command ────────────
 
 echo ""
-echo -e "${BOLD}Setting up background service...${RESET}"
+echo -e "${BOLD}Creating global aos command...${RESET}"
 echo ""
 
-SERVICE_OK=0
+mkdir -p "$BIN_DIR"
 
-if [ "$OS" = "macos" ]; then
-  # macOS — launchd
-  PLIST_DIR="$HOME/Library/LaunchAgents"
-  PLIST_FILE="$PLIST_DIR/com.aos.bot.plist"
-  mkdir -p "$PLIST_DIR"
-
-  cat > "$PLIST_FILE" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.aos.bot</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$(command -v node)</string>
-    <string>${PROJECT_ROOT}/dist/index.js</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${PROJECT_ROOT}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${PROJECT_ROOT}/store/aos.log</string>
-  <key>StandardErrorPath</key>
-  <string>${PROJECT_ROOT}/store/aos.error.log</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>NODE_ENV</key>
-    <string>production</string>
-  </dict>
-</dict>
-</plist>
+# Create aos shell wrapper
+cat > "$BIN_DIR/aos" << 'EOF'
+#!/usr/bin/env bash
+INSTALL_DIR="$HOME/.local/share/aos"
+cd "$INSTALL_DIR"
+exec node "$INSTALL_DIR/dist/cli.js" "$@"
 EOF
 
-  if launchctl load "$PLIST_FILE" 2>/dev/null; then
-    ok "launchd service installed and loaded (auto-starts on login)"
-    SERVICE_OK=1
-    SERVICE_START="launchctl start com.aos.bot"
-    SERVICE_STOP="launchctl stop com.aos.bot"
-    SERVICE_RESTART="launchctl stop com.aos.bot && launchctl start com.aos.bot"
-  else
-    warn "Could not load launchd service (non-critical)"
+chmod +x "$BIN_DIR/aos"
+ok "aos command created"
+
+# Add bin directory to PATH (update shell configs)
+UPDATE_SHELL_CONFIG() {
+  local config_file="$1"
+  local export_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
+  
+  if [ ! -f "$config_file" ]; then
+    echo "$export_line" >> "$config_file"
+    ok "Added to $config_file"
+    return
   fi
-
-elif [ "$OS" = "linux" ] || [ "$OS" = "wsl" ] || [ "$OS" = "unknown" ]; then
-  # Linux / WSL — systemd (user)
-  SERVICE_DIR="$HOME/.config/systemd/user"
-  SERVICE_FILE="$SERVICE_DIR/aos.service"
-  mkdir -p "$SERVICE_DIR"
-
-  cat > "$SERVICE_FILE" << EOF
-[Unit]
-Description=AOS — Alfred Operating System
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=$(command -v node) "${PROJECT_ROOT}/dist/index.js"
-WorkingDirectory=${PROJECT_ROOT}
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=true
-ReadWritePaths=${PROJECT_ROOT}/store ${PROJECT_ROOT}/workspace
-
-[Install]
-WantedBy=default.target
-EOF
-
-  if systemctl --user daemon-reload 2>/dev/null && \
-     systemctl --user enable aos 2>/dev/null; then
-    ok "systemd service installed and enabled (auto-starts on login)"
-    SERVICE_OK=1
-    SERVICE_START="systemctl --user start aos"
-    SERVICE_STOP="systemctl --user stop aos"
-    SERVICE_RESTART="systemctl --user restart aos"
-  else
-    warn "Could not set up systemd service (non-critical)"
+  
+  if ! grep -q "\.local/bin" "$config_file"; then
+    echo "$export_line" >> "$config_file"
+    ok "Added to $config_file"
   fi
+}
+
+if [ -f "$HOME/.bashrc" ]; then
+  UPDATE_SHELL_CONFIG "$HOME/.bashrc"
 fi
 
-if [ "$SERVICE_OK" = "0" ]; then
-  SERVICE_START="npm start"
-  SERVICE_STOP="Ctrl+C"
-  SERVICE_RESTART="Ctrl+C, then npm start"
+if [ -f "$HOME/.zshrc" ]; then
+  UPDATE_SHELL_CONFIG "$HOME/.zshrc"
 fi
 
-# ─── Step 6: Heartbeat cron ───────────────────────
-
-if [ "$OS" != "wsl" ] && command -v crontab &>/dev/null; then
-  EXISTING_CRON=$(crontab -l 2>/dev/null || true)
-  if echo "$EXISTING_CRON" | grep -qF "$PROJECT_ROOT/scripts/heartbeat.sh"; then
-    ok "Heartbeat monitor already in crontab"
-  else
-    echo ""
-    ANSWER=$(ask "Add heartbeat monitor to crontab? Auto-restarts AOS if it crashes. (Y/n): ")
-    if [[ ! "$ANSWER" =~ ^[Nn] ]]; then
-      (echo "$EXISTING_CRON"; printf '*/10 * * * * "%s/scripts/heartbeat.sh"\n' "$PROJECT_ROOT") | crontab -
-      ok "Heartbeat monitor added (checks every 10 minutes)"
-    fi
-  fi
+if [ -f "$HOME/.profile" ]; then
+  UPDATE_SHELL_CONFIG "$HOME/.profile"
 fi
+
+warn "Shell configuration updated — you may need to restart your terminal"
 
 # ─── Done ─────────────────────────────────────────
 
@@ -317,8 +305,7 @@ echo ""
 echo -e "  ${BOLD}What to do now:${RESET}"
 echo ""
 echo "  1. Start the bot:"
-echo -e "     ${BOLD}${SERVICE_START}${RESET}"
-echo "     (To stop: ${SERVICE_STOP})"
+echo -e "     ${BOLD}aos start${RESET}"
 echo ""
 echo "  2. Open Telegram and send /chatid to your bot"
 echo ""
@@ -326,9 +313,15 @@ echo "  3. Copy the chat ID and add it to .env:"
 echo -e "     ${BOLD}ALLOWED_CHAT_ID=<your_chat_id>${RESET}"
 echo ""
 echo "  4. Restart the bot:"
-echo -e "     ${BOLD}${SERVICE_RESTART}${RESET}"
+echo -e "     ${BOLD}aos stop && aos start${RESET}"
 echo ""
-echo "  5. Customize CLAUDE.md with your AI's personality"
+echo "  5. Check status:"
+echo -e "     ${BOLD}aos status${RESET}"
 echo ""
-echo "  6. Send a message — you're live!"
+echo "  6. View live logs:"
+echo -e "     ${BOLD}aos logs${RESET}"
+echo ""
+echo "  7. Customize CLAUDE.md with your AI's personality"
+echo ""
+echo "  8. Send a message — you're live!"
 echo ""

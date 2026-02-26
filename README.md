@@ -22,55 +22,65 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 
 ## Quick Start
 
-**Linux / macOS / WSL:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.sh | bash
-```
+**One-command install — works on Windows, macOS, and Linux:**
 
-**Windows (PowerShell — run as Administrator for background service):**
-```powershell
-irm https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.ps1 | iex
-```
-
-**From a cloned repo:**
 ```bash
 # Linux / macOS / WSL
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/GregMotenJr/aoc/dev/install.sh | bash
 
-# Windows
-powershell -ExecutionPolicy Bypass -File install.ps1
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/GregMotenJr/aoc/dev/install.ps1 | iex
 ```
 
-That's it. The installer handles dependencies, `.env` setup, TypeScript build, and background service registration automatically for your platform.
-
-### Alternative install methods
+Then from **any terminal** (after restart):
 
 ```bash
-# Install globally for the `aos` command
+# Start the bot
+aos start
+
+# Send /chatid to your bot on Telegram
+# Copy the ID and set it in ~/.env (or %LOCALAPPDATA%\Programs\AOS\.env on Windows)
+# ALLOWED_CHAT_ID=<your_chat_id>
+
+# Restart
+aos stop && aos start
+
+# Check status
+aos status
+
+# View live logs
+aos logs
+
+# Update to latest
+aos update
+```
+
+That's it. The installer handles everything:
+- ✓ Dependencies check (Node.js, npm, Claude CLI)
+- ✓ Fixed install location (`~/.local/share/aos` on Linux/macOS, `%LOCALAPPDATA%\Programs\AOS` on Windows)
+- ✓ Global `aos` command in PATH
+- ✓ `.env` setup with Telegram token
+- ✓ TypeScript build
+- ✓ Ready to run
+
+### Alternative: npm install
+
+```bash
 npm install -g alfred-os
 aos init my-assistant
 cd my-assistant
 aos start
-
-# Or clone the repo directly
-git clone https://github.com/GregMotenJr/aoc.git aos
-cd aos
-./install.sh
 ```
 
-<details>
-<summary>Manual setup (advanced)</summary>
+### Alternative: Manual setup
 
 ```bash
-git clone https://github.com/GregMotenJr/aoc.git aos
+git clone --branch dev https://github.com/GregMotenJr/aoc.git aos
 cd aos
-npm install
-cp .env.example .env
-# Edit .env with your tokens
-npm run build
-npm start
+./install.sh              # Linux/macOS
+# OR
+powershell -File install.ps1  # Windows
 ```
-</details>
 
 ## Configuration
 
@@ -103,7 +113,23 @@ Advanced tuning (all optional with sensible defaults):
 
 ## Commands
 
-### Telegram
+### Global CLI (`aos` command)
+
+Available from any terminal once installed:
+
+| Command | Description |
+|---------|-------------|
+| `aos start` | Start the bot (background process) |
+| `aos stop` | Stop the running bot |
+| `aos status` | Show PID + last 10 log lines |
+| `aos logs` | Tail live logs (follow mode) |
+| `aos update` | Git pull + rebuild + restart |
+| `aos init [dir]` | Create a new AOS project (interactive setup) |
+| `aos help` | Show command help |
+
+### Telegram Commands
+
+Inside Telegram, send these to your bot:
 
 | Command | Description |
 |---------|-------------|
@@ -116,20 +142,19 @@ Advanced tuning (all optional with sensible defaults):
 | `/schedule` | Manage scheduled tasks (create, list, pause, resume, delete) |
 | `/backup` | Download SQLite database backup |
 
-### CLI
+### npm Scripts (for development)
+
+When inside the project directory:
 
 | Command | Description |
 |---------|-------------|
-| `aos init [dir]` | Create a new AOS project (interactive setup) |
-| `aos start` | Start the bot (from project directory) |
-| `aos status` | Health check (from project directory) |
-| `npm start` | Run the bot (production) |
+| `npm start` | Run the bot (production mode) |
 | `npm run dev` | Run in development mode (pretty logs) |
+| `npm run build` | Compile TypeScript |
+| `npm run typecheck` | Type-check without emitting |
 | `npm run status` | System health check |
 | `npm run schedule` | Manage scheduled tasks via CLI |
 | `npm test` | Run test suite (70 tests) |
-| `npm run build` | Compile TypeScript |
-| `npm run typecheck` | Type-check without emitting |
 
 ## Architecture
 
