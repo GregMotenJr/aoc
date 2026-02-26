@@ -10,25 +10,24 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 - **Session persistence** — Conversations continue across messages via SQLite
 - **Dual-sector memory** — Semantic + episodic memory with FTS5 search and salience decay
 - **Voice notes** — Speech-to-text via Groq Whisper, text-to-speech via ElevenLabs
-- **Media handling** — Forward photos, documents, and videos for Claude to analyze
-- **Scheduled tasks** — Cron-based autonomous task execution with auto-delivery
-- **Security** — Chat ID allowlist, secret redaction, PID lock, systemd hardening
+- **Media handling** — Photos, documents, and videos forwarded to Claude for analysis
+- **Scheduled tasks** — Cron-based autonomous task execution with delivery and auto-disable on repeated failure
+- **Security** — Chat ID allowlist, outbound secret redaction, PID lock, systemd hardening
 
 ## Prerequisites
 
 - Node.js >= 20
-- Claude Code CLI installed and authenticated (`claude` command working)
-- Telegram account (create a bot via [@BotFather](https://t.me/BotFather))
+- Claude Code CLI installed and authenticated (`claude` command available)
+- Telegram bot token (create via [@BotFather](https://t.me/BotFather))
 
 ## Quick Start
 
 ```bash
-# Clone and install
-git clone <repo-url> aos
+git clone https://github.com/GregMotenJr/aoc.git aos
 cd aos
 npm install
 
-# Interactive setup
+# Interactive setup (configures .env, builds, installs systemd service)
 npm run setup
 
 # Or manual setup:
@@ -37,6 +36,35 @@ cp .env.example .env
 npm run build
 npm start
 ```
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in your values. Required:
+
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
+| `ALLOWED_CHAT_ID` | Your Telegram chat ID (send `/chatid` to the bot to get it) |
+
+Optional features enabled by additional API keys:
+
+| Variable | Feature |
+|----------|---------|
+| `GROQ_API_KEY` | Voice transcription via Whisper ([console.groq.com](https://console.groq.com)) |
+| `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` | Voice replies ([elevenlabs.io](https://elevenlabs.io)) |
+| `GOOGLE_API_KEY` | Video analysis via Gemini ([aistudio.google.com](https://aistudio.google.com)) |
+
+Advanced tuning (all optional with sensible defaults):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALLOWED_CHAT_IDS` | — | Comma-separated additional chat IDs for multi-user |
+| `WORKSPACE_DIR` | project root | Directory where `CLAUDE.md` lives |
+| `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+| `SCHEDULER_POLL_INTERVAL` | `60000` | Task poll interval in ms |
+| `MEMORY_DECAY_RATE` | `0.98` | Daily salience multiplier (0–1) |
+| `MEMORY_MIN_SALIENCE` | `0.1` | Threshold below which memories are auto-deleted |
+| `MAX_MEMORY_RESULTS` | `8` | Max memories injected per message context |
 
 ## Commands
 
@@ -50,89 +78,97 @@ npm start
 | `/forget` | Alias for `/newchat` |
 | `/memory` | View stored memories with salience scores |
 | `/voice` | Toggle voice reply mode |
-| `/schedule` | Manage scheduled tasks |
-| `/backup` | Download database backup |
-| `convolife` | Check context window usage |
-| `checkpoint` | Save session summary to memory |
+| `/schedule` | Manage scheduled tasks (create, list, pause, resume, delete) |
+| `/backup` | Download SQLite database backup |
 
 ### CLI
 
 | Command | Description |
 |---------|-------------|
 | `npm start` | Run the bot (production) |
-| `npm run dev` | Run in development mode |
+| `npm run dev` | Run in development mode (pretty logs) |
 | `npm run setup` | Interactive setup wizard |
 | `npm run status` | System health check |
 | `npm run schedule` | Manage scheduled tasks via CLI |
-| `npm test` | Run test suite |
+| `npm test` | Run test suite (70 tests) |
 | `npm run build` | Compile TypeScript |
 | `npm run typecheck` | Type-check without emitting |
 
-## Project Structure
+## Architecture
 
 ```
 src/
-  index.ts       — Entry point, lifecycle management
-  agent.ts       — Claude Code SDK wrapper
-  bot.ts         — Telegram bot (Grammy) with all commands
-  config.ts      — Typed configuration constants
-  db.ts          — SQLite schema and query functions
-  env.ts         — Safe .env parser (never pollutes process.env)
-  logger.ts      — Pino structured logging
-  media.ts       — File download and upload management
-  memory.ts      — Dual-sector memory with FTS5 and decay
-  scheduler.ts   — Cron-based task polling and execution
-  schedule-cli.ts — CLI for scheduled task management
-  security.ts    — Auth, secret redaction, PID lock
-  voice.ts       — STT (Groq Whisper) and TTS (ElevenLabs)
+├── index.ts         Entry point + lifecycle (signal handling, graceful shutdown)
+├── agent.ts         Claude Code SDK wrapper (query, session resume, usage tracking)
+├── bot.ts           Telegram bot (grammY) — commands, media handlers, Markdown→HTML formatter
+├── config.ts        Typed configuration from .env (paths, keys, tuning constants)
+├── db.ts            SQLite schema + CRUD (sessions, memories w/ FTS5, scheduled tasks)
+├── env.ts           Safe .env parser (never pollutes process.env)
+├── logger.ts        Pino structured logging (pretty in dev, JSON in prod)
+├── media.ts         Telegram file download, upload cleanup, message builders
+├── memory.ts        Dual-sector memory engine (semantic/episodic, FTS5 search, salience decay)
+├── scheduler.ts     Cron-based task polling with 3-strike auto-disable
+├── schedule-cli.ts  CLI interface for scheduled task management
+├── security.ts      Chat ID auth, outbound secret redaction, PID lock
+└── voice.ts         STT (Groq Whisper) + TTS (ElevenLabs)
+
 scripts/
-  setup.ts       — Interactive setup wizard
-  status.ts      — System health check
-  notify.sh      — Send Telegram message from shell
-  heartbeat.sh   — Cron-based process monitor
+├── setup.ts         Interactive setup wizard (config, build, systemd install)
+├── status.ts        System health check (Node, Claude CLI, .env, DB, process)
+├── heartbeat.sh     Cron-based process monitor with auto-restart
+└── notify.sh        Send Telegram messages from shell scripts
 ```
 
-## Configuration
+## Memory System
 
-Copy `.env.example` to `.env` and configure. Required variables:
+AOS uses a dual-sector memory model inspired by cognitive architecture:
 
-- `TELEGRAM_BOT_TOKEN` — From [@BotFather](https://t.me/BotFather)
-- `ALLOWED_CHAT_ID` — Your Telegram chat ID (send `/chatid` to get it)
+- **Semantic memories** — Long-term facts and preferences (triggered by signals like "I prefer", "always", "never")
+- **Episodic memories** — Conversation context and events
 
-Optional features enabled by additional API keys:
-
-- `GROQ_API_KEY` — Voice transcription ([console.groq.com](https://console.groq.com))
-- `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` — Voice replies ([elevenlabs.io](https://elevenlabs.io))
-- `GOOGLE_API_KEY` — Video analysis ([aistudio.google.com](https://aistudio.google.com))
+Memories are automatically:
+- **Saved** from each conversation turn
+- **Retrieved** via FTS5 full-text search + recency ranking
+- **Boosted** when accessed (salience increases by 0.1, capped at 5.0)
+- **Decayed** daily (configurable rate, default 2%/day)
+- **Pruned** when salience drops below minimum threshold
 
 ## Deployment
 
-AOS runs as a systemd user service on Linux:
+### systemd (recommended)
+
+The setup wizard installs a systemd user service automatically:
 
 ```bash
-# Setup installs the service automatically
-npm run setup
-
-# Manual service management
 systemctl --user start aos
 systemctl --user stop aos
 systemctl --user status aos
 journalctl --user -u aos -f
 ```
 
-Add heartbeat monitoring to crontab:
+### Heartbeat monitoring
+
+Add to crontab for automatic restart on crash:
 
 ```bash
 */10 * * * * /path/to/aos/scripts/heartbeat.sh
 ```
 
-## Second VPS Deployment
+### Multi-instance
 
-Only these files differ between instances:
-- `.env` (tokens and API keys)
-- `CLAUDE.md` (personality and context)
+Deploy to multiple machines with different personalities. Only these files differ:
+- `.env` — Tokens and API keys
+- `CLAUDE.md` — Personality and context
 
 Everything else is identical.
+
+## Security
+
+- **Chat ID allowlist** — Only configured users can interact with the bot
+- **First-run mode** — Accepts all chats when no `ALLOWED_CHAT_ID` is set (for initial `/chatid` discovery)
+- **Secret redaction** — API keys, tokens, and passwords are automatically stripped from outbound messages
+- **PID lock** — Prevents duplicate instances; auto-kills stale processes
+- **systemd hardening** — `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
 
 ## License
 

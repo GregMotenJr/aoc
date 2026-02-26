@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initDatabase, closeDatabase, saveMemory } from '../src/db.js';
+import { initDatabase, closeDatabase, saveMemory, getRecentMemories, getDb } from '../src/db.js';
 import {
   buildMemoryContext,
   saveConversationTurn,
@@ -65,30 +65,30 @@ describe('memory.ts — dual-sector memory', () => {
       expect(ctx).toBe('');
     });
 
-    it('detects semantic signals and classifies correctly', () => {
+    it('detects semantic signals and classifies correctly', async () => {
       saveConversationTurn(
         '123',
         'I prefer TypeScript over JavaScript for all my projects',
         'Noted, TypeScript preference saved.',
       );
 
-      const { getRecentMemories } = await import('../src/db.js');
+      
       const memories = getRecentMemories('123', 10);
       const userMemory = memories.find((m) =>
-        m.content.includes('TypeScript'),
+        m.content.includes('I prefer TypeScript'),
       );
       expect(userMemory).toBeDefined();
       expect(userMemory!.sector).toBe('semantic');
     });
 
-    it('classifies non-signal messages as episodic', () => {
+    it('classifies non-signal messages as episodic', async () => {
       saveConversationTurn(
         '123',
         'Can you look up the weather for tomorrow in New York?',
         'The weather in New York tomorrow will be sunny.',
       );
 
-      const { getRecentMemories } = await import('../src/db.js');
+      
       const memories = getRecentMemories('123', 10);
       const userMemory = memories.find((m) => m.content.includes('weather'));
       expect(userMemory).toBeDefined();
@@ -103,10 +103,10 @@ describe('memory.ts — dual-sector memory', () => {
       expect(result).toHaveProperty('deleted');
     });
 
-    it('decays old memories', () => {
+    it('decays old memories', async () => {
       saveMemory('123', 'Old memory that should decay', 'episodic');
       // Set created_at to 2 days ago
-      const { getDb } = await import('../src/db.js');
+      
       const db = getDb();
       db.prepare(
         'UPDATE memories SET created_at = created_at - 200000',

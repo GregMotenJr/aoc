@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initDatabase,
   closeDatabase,
+  getDb,
   getSession,
   setSession,
   clearSession,
@@ -125,11 +126,11 @@ describe('db.ts — SQLite layer', () => {
       expect(memories[0].salience).toBe(5.0);
     });
 
-    it('decays old memories and deletes low-salience ones', () => {
+    it('decays old memories and deletes low-salience ones', async () => {
       // Insert a memory with artificially low salience
       const id = saveMemory('123', 'Fading memory', 'episodic');
       // Manually set low salience
-      const db = (await import('../src/db.js')).getDb();
+      const db = getDb();
       db.prepare('UPDATE memories SET salience = 0.05, created_at = created_at - 200000 WHERE id = ?').run(id);
 
       const result = decayMemories(0.98, 0.1);
@@ -157,14 +158,14 @@ describe('db.ts — SQLite layer', () => {
       expect(results.length).toBeGreaterThan(0);
     });
 
-    it('delete trigger removes from FTS', () => {
+    it('delete trigger removes from FTS', async () => {
       const id = saveMemory('123', 'To be deleted omega', 'semantic');
       // Verify it's searchable
       let results = searchMemories('123', 'omega');
       expect(results.length).toBeGreaterThan(0);
 
       // Delete via decay (set salience to 0)
-      const db = (await import('../src/db.js')).getDb();
+      const db = getDb();
       db.prepare('DELETE FROM memories WHERE id = ?').run(id);
 
       results = searchMemories('123', 'omega');

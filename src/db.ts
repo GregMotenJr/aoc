@@ -71,7 +71,8 @@ export function initDatabase(dbPath?: string): Database.Database {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
-      content_rowid=id
+      content='memories',
+      content_rowid='id'
     )
   `);
 

@@ -61,11 +61,8 @@ export function formatForTelegram(text: string): string {
   // Escape HTML entities in non-code content
   processed = escapeHtml(processed);
 
-  // Restore code blocks (they're already escaped)
-  processed = processed.replace(
-    /%%CODEBLOCK_(\d+)%%/g,
-    (_match, idx: string) => codeBlocks[parseInt(idx, 10)],
-  );
+  // Apply markdown conversions BEFORE restoring code blocks
+  // so code block contents are not affected
 
   // Headings: # Heading -> <b>Heading</b>
   processed = processed.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
@@ -116,6 +113,12 @@ export function formatForTelegram(text: string): string {
   processed = processed.replace(
     /<(?!\/?(?:b|i|code|pre|s|a|u)\b)[^>]+>/g,
     '',
+  );
+
+  // Restore code blocks AFTER all markdown conversions
+  processed = processed.replace(
+    /%%CODEBLOCK_(\d+)%%/g,
+    (_match, idx: string) => codeBlocks[parseInt(idx, 10)],
   );
 
   return processed.trim();
