@@ -1,4 +1,5 @@
-import { parseExpression } from 'cron-parser';
+import pkg from 'cron-parser';
+const { parseExpression } = pkg as unknown as { parseExpression: typeof import('cron-parser').parseExpression };
 import { runAgent } from './agent.js';
 import {
   getDueTasks,
