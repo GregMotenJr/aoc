@@ -250,7 +250,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(command -v node) ${PROJECT_ROOT}/dist/index.js
+ExecStart=$(command -v node) "${PROJECT_ROOT}/dist/index.js"
 WorkingDirectory=${PROJECT_ROOT}
 Restart=always
 RestartSec=5
