@@ -12,7 +12,7 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 - **Voice notes** — Speech-to-text via Groq Whisper, text-to-speech via ElevenLabs
 - **Media handling** — Photos, documents, and videos forwarded to Claude for analysis
 - **Scheduled tasks** — Cron-based autonomous task execution with delivery and auto-disable on repeated failure
-- **Security** — Chat ID allowlist, outbound secret redaction, PID lock, systemd hardening
+- **Security** — Chat ID allowlist, outbound secret redaction, PID lock, OS-level service hardening
 
 ## Prerequisites
 
@@ -42,8 +42,6 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 That's it. The installer handles dependencies, `.env` setup, TypeScript build, and background service registration automatically for your platform.
-
-That's it. The installer walks you through everything — dependencies, Telegram bot setup, API keys, building, and background service installation.
 
 ### Alternative install methods
 
@@ -136,7 +134,8 @@ Advanced tuning (all optional with sensible defaults):
 ## Architecture
 
 ```
-install.sh             One-command installer (deps, config, build, service)
+install.sh             One-command installer — Linux, macOS, WSL (deps, config, build, service)
+install.ps1            One-command installer — Windows native (deps, config, build, Task Scheduler)
 
 src/
 ├── cli.ts             CLI entry point (aos init / aos start / aos status)
@@ -155,9 +154,10 @@ src/
 └── voice.ts           STT (Groq Whisper) + TTS (ElevenLabs)
 
 scripts/
-├── setup.ts           Interactive setup wizard (used by install.sh)
+├── setup.ts           Interactive setup wizard (used by installers)
 ├── status.ts          System health check (Node, Claude CLI, .env, DB, process)
-├── heartbeat.sh       Cron-based process monitor with auto-restart
+├── heartbeat.sh       Process monitor with auto-restart (Linux/macOS — cron)
+├── heartbeat.ps1      Process monitor with auto-restart (Windows — Task Scheduler)
 └── notify.sh          Send Telegram messages from shell scripts
 ```
 
@@ -177,9 +177,9 @@ Memories are automatically:
 
 ## Deployment
 
-### systemd (recommended)
+The installer sets up the right background service for your platform automatically.
 
-The setup wizard installs a systemd user service automatically:
+### Linux — systemd
 
 ```bash
 systemctl --user start aos
@@ -188,13 +188,32 @@ systemctl --user status aos
 journalctl --user -u aos -f
 ```
 
-### Heartbeat monitoring
-
-Add to crontab for automatic restart on crash:
-
+Heartbeat (add to crontab for auto-restart on crash):
 ```bash
 */10 * * * * /path/to/aos/scripts/heartbeat.sh
 ```
+
+### macOS — launchd
+
+```bash
+launchctl start com.aos.bot
+launchctl stop com.aos.bot
+# Logs
+tail -f /path/to/aos/store/aos.log
+```
+
+Heartbeat runs via crontab (added automatically by the installer).
+
+### Windows — Task Scheduler
+
+```powershell
+Start-ScheduledTask  -TaskName "AOS-Alfred"
+Stop-ScheduledTask   -TaskName "AOS-Alfred"
+# Logs
+Get-Content "$ProjectRoot\store\aos.log" -Wait
+```
+
+Heartbeat runs as a separate scheduled task (`AOS-Heartbeat`, every 10 min).
 
 ### Multi-instance
 
@@ -210,7 +229,7 @@ Everything else is identical.
 - **First-run mode** — Accepts all chats when no `ALLOWED_CHAT_ID` is set (for initial `/chatid` discovery)
 - **Secret redaction** — API keys, tokens, and passwords are automatically stripped from outbound messages
 - **PID lock** — Prevents duplicate instances; auto-kills stale processes
-- **systemd hardening** — `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
+- **Service hardening** — Linux: `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp` via systemd; macOS: sandboxed launchd agent; Windows: elevated Task Scheduler with restricted scope
 
 ## License
 
