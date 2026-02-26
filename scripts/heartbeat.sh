@@ -44,5 +44,6 @@ else
   log "ACTION: Attempting direct start"
   cd "$PROJECT_ROOT"
   nohup node dist/index.js >> "$PROJECT_ROOT/store/aos.log" 2>&1 &
+  echo "$!" > "$PID_FILE"
   log "OK: AOS started directly (PID $!)"
 fi

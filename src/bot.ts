@@ -455,7 +455,8 @@ Cron examples: "0 9 * * *" (daily 9am), "0 */4 * * *" (every 4h)`,
       }
 
       const id = randomUUID().slice(0, 8);
-      const nextRun = computeNextRun(cron);
+      // isValidCron already passed above — non-null is safe here
+      const nextRun = computeNextRun(cron)!;
       createTask(id, chatId, prompt, cron, nextRun);
 
       const nextDate = new Date(nextRun * 1000)

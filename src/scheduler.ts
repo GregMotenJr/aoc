@@ -1,4 +1,5 @@
-import { parseExpression } from 'cron-parser';
+import pkg from 'cron-parser';
+const { parseExpression } = pkg as unknown as { parseExpression: typeof import('cron-parser').parseExpression };
 import { runAgent } from './agent.js';
 import {
   getDueTasks,
@@ -20,11 +21,16 @@ const THREE_STRIKE_LIMIT = 3;
 
 /**
  * Compute the next run time from a cron expression.
- * Returns Unix epoch seconds.
+ * Returns Unix epoch seconds, or null if the expression is invalid.
  */
-export function computeNextRun(cronExpression: string): number {
-  const interval = parseExpression(cronExpression);
-  return Math.floor(interval.next().getTime() / 1000);
+export function computeNextRun(cronExpression: string): number | null {
+  try {
+    const interval = parseExpression(cronExpression);
+    return Math.floor(interval.next().getTime() / 1000);
+  } catch (err) {
+    log.error({ cronExpression, err }, 'Invalid cron expression in computeNextRun — skipping');
+    return null;
+  }
 }
 
 /**
@@ -70,8 +76,14 @@ async function runDueTasks(): Promise<void> {
         await sendFn(task.chat_id, result.text);
       }
 
-      updateTaskAfterRun(task.id, result.text ?? 'No response', nextRun);
-      log.info({ taskId: task.id, nextRun }, 'Task completed successfully');
+      if (nextRun === null) {
+        disableTask(task.id);
+        await sendFn(task.chat_id, `Scheduled task "${promptPreview}" has an invalid cron expression and has been auto-disabled.`);
+        log.error({ taskId: task.id, schedule: task.schedule }, 'Task auto-disabled — invalid cron expression');
+      } else {
+        updateTaskAfterRun(task.id, result.text ?? 'No response', nextRun);
+        log.info({ taskId: task.id, nextRun }, 'Task completed successfully');
+      }
     } catch (err) {
       log.error(
         { err, taskId: task.id, category: 'SchedulerError' },
@@ -79,12 +91,17 @@ async function runDueTasks(): Promise<void> {
       );
 
       const nextRun = computeNextRun(task.schedule);
-      updateTaskAfterRun(
-        task.id,
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-        nextRun,
-        true,
-      );
+      if (nextRun !== null) {
+        updateTaskAfterRun(
+          task.id,
+          `Error: ${err instanceof Error ? err.message : String(err)}`,
+          nextRun,
+          true,
+        );
+      } else {
+        disableTask(task.id);
+        log.error({ taskId: task.id, schedule: task.schedule }, 'Task auto-disabled — invalid cron expression on error path');
+      }
 
       // Three-strike auto-disable
       const updated = getTask(task.id);
