@@ -20,9 +20,16 @@ RESET='\033[0m'
 ok()   { echo -e "${GREEN}✓${RESET} $1"; }
 warn() { echo -e "${YELLOW}⚠${RESET} $1"; }
 fail() { echo -e "${RED}✗${RESET} $1"; exit 1; }
-ask()  { read -rp "$1" REPLY; echo "$REPLY"; }
+ask()  { read -rp "$1" REPLY </dev/tty; echo "$REPLY"; }
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve project root — BASH_SOURCE[0] is empty when piped via curl | bash,
+# so fall back to $0 (also empty in that case) then pwd.
+_BASH_SOURCE="${BASH_SOURCE[0]:-}"
+if [ -n "$_BASH_SOURCE" ]; then
+  PROJECT_ROOT="$(cd "$(dirname "$_BASH_SOURCE")" && pwd)"
+else
+  PROJECT_ROOT="$(pwd)"
+fi
 cd "$PROJECT_ROOT"
 
 # ─── Detect OS ────────────────────────────────────
@@ -232,6 +239,7 @@ EOF
     ok "launchd service installed and loaded (auto-starts on login)"
     SERVICE_OK=1
     SERVICE_START="launchctl start com.aos.bot"
+    SERVICE_STOP="launchctl stop com.aos.bot"
     SERVICE_RESTART="launchctl stop com.aos.bot && launchctl start com.aos.bot"
   else
     warn "Could not load launchd service (non-critical)"
@@ -270,6 +278,7 @@ EOF
     ok "systemd service installed and enabled (auto-starts on login)"
     SERVICE_OK=1
     SERVICE_START="systemctl --user start aos"
+    SERVICE_STOP="systemctl --user stop aos"
     SERVICE_RESTART="systemctl --user restart aos"
   else
     warn "Could not set up systemd service (non-critical)"
@@ -286,13 +295,13 @@ fi
 
 if [ "$OS" != "wsl" ] && command -v crontab &>/dev/null; then
   EXISTING_CRON=$(crontab -l 2>/dev/null || true)
-  if echo "$EXISTING_CRON" | grep -q "aos/scripts/heartbeat.sh"; then
+  if echo "$EXISTING_CRON" | grep -qF "$PROJECT_ROOT/scripts/heartbeat.sh"; then
     ok "Heartbeat monitor already in crontab"
   else
     echo ""
     ANSWER=$(ask "Add heartbeat monitor to crontab? Auto-restarts AOS if it crashes. (Y/n): ")
     if [[ ! "$ANSWER" =~ ^[Nn] ]]; then
-      (echo "$EXISTING_CRON"; echo "*/10 * * * * ${PROJECT_ROOT}/scripts/heartbeat.sh") | crontab -
+      (echo "$EXISTING_CRON"; printf '*/10 * * * * "%s/scripts/heartbeat.sh"\n' "$PROJECT_ROOT") | crontab -
       ok "Heartbeat monitor added (checks every 10 minutes)"
     fi
   fi
@@ -309,6 +318,7 @@ echo -e "  ${BOLD}What to do now:${RESET}"
 echo ""
 echo "  1. Start the bot:"
 echo -e "     ${BOLD}${SERVICE_START}${RESET}"
+echo "     (To stop: ${SERVICE_STOP})"
 echo ""
 echo "  2. Open Telegram and send /chatid to your bot"
 echo ""
