@@ -1,0 +1,38 @@
+{
+  "name": "aos",
+  "version": "1.0.0",
+  "description": "AOS (Alfred Operating System) — Personal AI assistant runtime bridging Claude Code to Telegram",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "aos": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "setup": "tsx scripts/setup.ts",
+    "status": "tsx scripts/status.ts",
+    "schedule": "node dist/schedule-cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "better-sqlite3": "^11.0.0",
+    "cron-parser": "^4.9.0",
+    "grammy": "^1.30.0",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

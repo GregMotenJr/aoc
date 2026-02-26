@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+store/
+workspace/uploads/
+*.log
+*.pid
+
+# Build artifacts
+BUILD_TASK.md
+
+# BMAD planning internals (keep SpecDocs, exclude BMAD runtime)
+_bmad/
+docs/
