@@ -33,12 +33,15 @@ jobs:
           echo "PASS: $VERSION is valid semver"
 
       - name: Check package.json version matches tag
-        if: github.event_name != 'workflow_dispatch'
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ github.event.inputs.version }}"
+          else
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+          fi
           PKG_VERSION=$(node -p "require('./package.json').version")
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "ERROR: Tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
+            echo "ERROR: v$TAG_VERSION does not match package.json version $PKG_VERSION"
             echo "Bump package.json before tagging."
             exit 1
           fi

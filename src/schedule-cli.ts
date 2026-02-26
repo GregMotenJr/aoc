@@ -54,7 +54,8 @@ function run(): void {
       }
 
       const id = randomUUID().slice(0, 8);
-      const nextRun = computeNextRun(cron);
+      // isValidCron already passed above — non-null is safe here
+      const nextRun = computeNextRun(cron)!;
       createTask(id, chatId, prompt, cron, nextRun);
       console.log(`Task created: ${id}`);
       console.log(`  Prompt: ${prompt}`);

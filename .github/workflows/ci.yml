@@ -17,11 +17,12 @@ jobs:
         with:
           fetch-depth: 0
       - name: Validate PR title (Conventional Commits)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          echo "PR title: $TITLE"
+          printf 'PR title: %s\n' "$PR_TITLE"
           PATTERN="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?(!)?: .{1,100}$"
-          if ! echo "$TITLE" | grep -qE "$PATTERN"; then
+          if ! printf '%s' "$PR_TITLE" | grep -qE "$PATTERN"; then
             echo ""
             echo "ERROR: PR title must follow Conventional Commits format."
             echo "  Examples:"
@@ -157,9 +158,8 @@ jobs:
           kill $(cat store/aos.pid) 2>/dev/null || true
 
       - name: npm run status — executes without crash
-        run: |
-          npm run status 2>&1 || true
-          echo "PASS: status script completes"
+        continue-on-error: true  # exits non-zero in CI (bot not running) — that's expected
+        run: npm run status
 
   # ─── Stage 4: E2E Tests (requires secret) ─────────
   e2e:
@@ -268,7 +268,6 @@ jobs:
         if: steps.check.outputs.skip == 'false'
         env:
           TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
         run: |
           node -e "
             const r = await fetch('https://api.telegram.org/bot' + process.env.TOKEN + '/sendMessage', {

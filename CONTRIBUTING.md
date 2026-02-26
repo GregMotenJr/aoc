@@ -15,7 +15,7 @@ All work goes through a PR. Direct pushes to `main` are blocked.
 
 All commits must follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<optional scope>): <description>
 ```
 
@@ -39,7 +39,7 @@ All commits must follow [Conventional Commits](https://www.conventionalcommits.o
 
 Append `!` to the type or add `BREAKING CHANGE:` in the footer:
 
-```
+```text
 feat!: redesign memory storage schema
 
 BREAKING CHANGE: existing .db files must be migrated with `npm run migrate`
@@ -47,7 +47,7 @@ BREAKING CHANGE: existing .db files must be migrated with `npm run migrate`
 
 ### Examples
 
-```
+```text
 feat: add /schedule pause and resume commands
 fix: resolve cron-parser ESM import on Node 22
 docs: update Windows install instructions
