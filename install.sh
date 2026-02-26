@@ -3,12 +3,11 @@
 # AOS Installer — One command, fully running bot
 # ═══════════════════════════════════════════════════
 #
-# Usage:
-#   git clone https://github.com/GregMotenJr/aoc.git aos
-#   cd aos
-#   ./install.sh
+# Linux / macOS / WSL:
+#   curl -fsSL https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.sh | bash
 #
-# That's it. This script handles everything else.
+# Windows (PowerShell):
+#   irm https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.ps1 | iex
 
 set -euo pipefail
 
@@ -26,6 +25,22 @@ ask()  { read -rp "$1" REPLY; echo "$REPLY"; }
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
 
+# ─── Detect OS ────────────────────────────────────
+
+detect_os() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "macos"
+  elif grep -qi microsoft /proc/version 2>/dev/null; then
+    echo "wsl"
+  elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo "linux"
+  else
+    echo "unknown"
+  fi
+}
+
+OS=$(detect_os)
+
 echo ""
 echo -e "${BOLD}╔═══════════════════════════════════════╗"
 echo -e "║   AOS — Alfred Operating System       ║"
@@ -33,12 +48,19 @@ echo -e "║   One-command installer                ║"
 echo -e "╚═══════════════════════════════════════╝${RESET}"
 echo ""
 
+case "$OS" in
+  macos)  echo -e "  Platform: ${BOLD}macOS${RESET}" ;;
+  linux)  echo -e "  Platform: ${BOLD}Linux${RESET}" ;;
+  wsl)    echo -e "  Platform: ${BOLD}Windows (WSL)${RESET}" ;;
+  *)      echo -e "  Platform: ${BOLD}Unknown — proceeding as Linux${RESET}" ;;
+esac
+echo ""
+
 # ─── Step 1: Check prerequisites ──────────────────
 
 echo -e "${BOLD}Checking prerequisites...${RESET}"
 echo ""
 
-# Node.js
 if ! command -v node &>/dev/null; then
   fail "Node.js not found. Install Node.js 20+ from https://nodejs.org"
 fi
@@ -49,13 +71,11 @@ if [ "$NODE_VERSION" -lt 20 ]; then
 fi
 ok "Node.js $(node -v)"
 
-# npm
 if ! command -v npm &>/dev/null; then
   fail "npm not found. It should come with Node.js — reinstall from https://nodejs.org"
 fi
 ok "npm $(npm -v)"
 
-# Claude CLI
 if command -v claude &>/dev/null; then
   ok "Claude CLI $(claude --version 2>/dev/null || echo 'installed')"
 else
@@ -88,6 +108,7 @@ echo ""
 echo -e "${BOLD}Configuration${RESET}"
 echo ""
 
+SKIP_ENV=0
 if [ -f .env ]; then
   echo "  Existing .env file found."
   ANSWER=$(ask "  Overwrite it? (y/N): ")
@@ -97,7 +118,7 @@ if [ -f .env ]; then
   fi
 fi
 
-if [ "${SKIP_ENV:-0}" != "1" ]; then
+if [ "$SKIP_ENV" != "1" ]; then
   echo ""
   echo "  You'll need a Telegram bot token. If you don't have one:"
   echo "  1. Open Telegram and search for @BotFather"
@@ -161,13 +182,64 @@ echo ""
 npm run build
 ok "TypeScript compiled"
 
-# ─── Step 5: systemd service (Linux only) ─────────
+# ─── Step 5: Background service ───────────────────
 
-if [ "$(uname)" = "Linux" ]; then
-  echo ""
-  echo -e "${BOLD}Setting up background service...${RESET}"
-  echo ""
+echo ""
+echo -e "${BOLD}Setting up background service...${RESET}"
+echo ""
 
+SERVICE_OK=0
+
+if [ "$OS" = "macos" ]; then
+  # macOS — launchd
+  PLIST_DIR="$HOME/Library/LaunchAgents"
+  PLIST_FILE="$PLIST_DIR/com.aos.bot.plist"
+  mkdir -p "$PLIST_DIR"
+
+  cat > "$PLIST_FILE" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aos.bot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(command -v node)</string>
+    <string>${PROJECT_ROOT}/dist/index.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${PROJECT_ROOT}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${PROJECT_ROOT}/store/aos.log</string>
+  <key>StandardErrorPath</key>
+  <string>${PROJECT_ROOT}/store/aos.error.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
+  if launchctl load "$PLIST_FILE" 2>/dev/null; then
+    ok "launchd service installed and loaded (auto-starts on login)"
+    SERVICE_OK=1
+    SERVICE_START="launchctl start com.aos.bot"
+    SERVICE_STOP="launchctl stop com.aos.bot"
+    SERVICE_RESTART="launchctl stop com.aos.bot && launchctl start com.aos.bot"
+  else
+    warn "Could not load launchd service (non-critical)"
+  fi
+
+elif [ "$OS" = "linux" ] || [ "$OS" = "wsl" ] || [ "$OS" = "unknown" ]; then
+  # Linux / WSL — systemd (user)
   SERVICE_DIR="$HOME/.config/systemd/user"
   SERVICE_FILE="$SERVICE_DIR/aos.service"
   mkdir -p "$SERVICE_DIR"
@@ -196,17 +268,25 @@ EOF
 
   if systemctl --user daemon-reload 2>/dev/null && \
      systemctl --user enable aos 2>/dev/null; then
-    ok "systemd service installed and enabled"
-    SYSTEMD_OK=1
+    ok "systemd service installed and enabled (auto-starts on login)"
+    SERVICE_OK=1
+    SERVICE_START="systemctl --user start aos"
+    SERVICE_STOP="systemctl --user stop aos"
+    SERVICE_RESTART="systemctl --user restart aos"
   else
     warn "Could not set up systemd service (non-critical)"
-    SYSTEMD_OK=0
   fi
 fi
 
-# ─── Step 6: Heartbeat cron (Linux/macOS) ─────────
+if [ "$SERVICE_OK" = "0" ]; then
+  SERVICE_START="npm start"
+  SERVICE_STOP="Ctrl+C"
+  SERVICE_RESTART="Ctrl+C, then npm start"
+fi
 
-if command -v crontab &>/dev/null; then
+# ─── Step 6: Heartbeat cron ───────────────────────
+
+if [ "$OS" != "wsl" ] && command -v crontab &>/dev/null; then
   EXISTING_CRON=$(crontab -l 2>/dev/null || true)
   if echo "$EXISTING_CRON" | grep -q "aos/scripts/heartbeat.sh"; then
     ok "Heartbeat monitor already in crontab"
@@ -229,29 +309,16 @@ echo -e "${BOLD}${GREEN}══════════════════�
 echo ""
 echo -e "  ${BOLD}What to do now:${RESET}"
 echo ""
-
-if [ "${SYSTEMD_OK:-0}" = "1" ]; then
-  echo "  1. Start the bot:"
-  echo -e "     ${BOLD}systemctl --user start aos${RESET}"
-else
-  echo "  1. Start the bot:"
-  echo -e "     ${BOLD}npm start${RESET}"
-fi
-
+echo "  1. Start the bot:"
+echo -e "     ${BOLD}${SERVICE_START}${RESET}"
 echo ""
 echo "  2. Open Telegram and send /chatid to your bot"
 echo ""
 echo "  3. Copy the chat ID and add it to .env:"
 echo -e "     ${BOLD}ALLOWED_CHAT_ID=<your_chat_id>${RESET}"
 echo ""
-
-if [ "${SYSTEMD_OK:-0}" = "1" ]; then
-  echo "  4. Restart to lock it down:"
-  echo -e "     ${BOLD}systemctl --user restart aos${RESET}"
-else
-  echo "  4. Restart the bot (Ctrl+C, then npm start)"
-fi
-
+echo "  4. Restart the bot:"
+echo -e "     ${BOLD}${SERVICE_RESTART}${RESET}"
 echo ""
 echo "  5. Customize CLAUDE.md with your AI's personality"
 echo ""

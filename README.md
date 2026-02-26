@@ -22,11 +22,26 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 
 ## Quick Start
 
+**Linux / macOS / WSL:**
 ```bash
-npx alfred-os init
-cd aos
-npm start
+curl -fsSL https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.sh | bash
 ```
+
+**Windows (PowerShell — run as Administrator for background service):**
+```powershell
+irm https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.ps1 | iex
+```
+
+**From a cloned repo:**
+```bash
+# Linux / macOS / WSL
+./install.sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+That's it. The installer handles dependencies, `.env` setup, TypeScript build, and background service registration automatically for your platform.
 
 That's it. The installer walks you through everything — dependencies, Telegram bot setup, API keys, building, and background service installation.
 
