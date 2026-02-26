@@ -1,22 +1,53 @@
 {
-  "name": "aos",
+  "name": "alfred-os",
   "version": "1.0.0",
   "description": "AOS (Alfred Operating System) — Personal AI assistant runtime bridging Claude Code to Telegram",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "aos": "dist/index.js"
+    "aos": "dist/cli.js",
+    "alfred-os": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "src",
+    "scripts",
+    "tests",
+    "tsconfig.json",
+    "vitest.config.ts",
+    ".env.example",
+    ".gitignore",
+    "CLAUDE.md",
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "setup": "tsx scripts/setup.ts",
     "status": "tsx scripts/status.ts",
     "schedule": "node dist/schedule-cli.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test"
   },
+  "keywords": [
+    "ai-assistant",
+    "claude",
+    "claude-code",
+    "telegram-bot",
+    "personal-assistant",
+    "alfred",
+    "aos"
+  ],
+  "author": "Greg Moten Jr",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GregMotenJr/aoc.git"
+  },
+  "homepage": "https://github.com/GregMotenJr/aoc#readme",
   "engines": {
     "node": ">=20"
   },

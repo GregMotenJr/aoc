@@ -23,17 +23,34 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 ## Quick Start
 
 ```bash
+npx alfred-os init
+cd aos
+npm start
+```
+
+That's it. The installer walks you through everything — dependencies, Telegram bot setup, API keys, building, and background service installation.
+
+### Alternative install methods
+
+```bash
+# Install globally for the `aos` command
+npm install -g alfred-os
+aos init my-assistant
+cd my-assistant
+aos start
+
+# Or clone the repo directly
 git clone https://github.com/GregMotenJr/aoc.git aos
 cd aos
 ./install.sh
 ```
 
-That's it. The installer walks you through everything — dependencies, configuration, building, and setting up the background service.
-
 <details>
 <summary>Manual setup (advanced)</summary>
 
 ```bash
+git clone https://github.com/GregMotenJr/aoc.git aos
+cd aos
 npm install
 cp .env.example .env
 # Edit .env with your tokens
@@ -90,6 +107,9 @@ Advanced tuning (all optional with sensible defaults):
 
 | Command | Description |
 |---------|-------------|
+| `aos init [dir]` | Create a new AOS project (interactive setup) |
+| `aos start` | Start the bot (from project directory) |
+| `aos status` | Health check (from project directory) |
 | `npm start` | Run the bot (production) |
 | `npm run dev` | Run in development mode (pretty logs) |
 | `npm run status` | System health check |
@@ -104,6 +124,7 @@ Advanced tuning (all optional with sensible defaults):
 install.sh             One-command installer (deps, config, build, service)
 
 src/
+├── cli.ts             CLI entry point (aos init / aos start / aos status)
 ├── index.ts           Entry point + lifecycle (signal handling, graceful shutdown)
 ├── agent.ts           Claude Code SDK wrapper (query, session resume, usage tracking)
 ├── bot.ts             Telegram bot (grammY) — commands, media handlers, Markdown→HTML formatter
