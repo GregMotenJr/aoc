@@ -43,8 +43,10 @@ export async function runAgent(
       prompt: message,
       options: {
         cwd: WORKSPACE_DIR,
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
+        // bypassPermissions + allowDangerouslySkipPermissions are blocked when
+        // running as root. Use acceptEdits so file operations auto-accept
+        // without interactive prompts in headless/background mode.
+        permissionMode: 'acceptEdits',
         settingSources: ['project', 'user'],
         ...(sessionId ? { resume: sessionId } : {}),
       },
