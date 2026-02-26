@@ -166,41 +166,61 @@ jobs:
     name: E2E Tests
     needs: [unit-test, integration]
     runs-on: ubuntu-latest
-    # Only run when the test bot token secret is present
-    if: ${{ secrets.TELEGRAM_TEST_TOKEN != '' && secrets.TELEGRAM_TEST_CHAT_ID != '' }}
     steps:
+      - name: Check secrets available
+        id: check
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⚠️  TELEGRAM secrets not set — skipping E2E"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "✓ TELEGRAM secrets present — running E2E"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.check.outputs.skip == 'false'
+
       - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip == 'false'
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip == 'false'
+        run: npm ci
+
       - name: Download dist
+        if: steps.check.outputs.skip == 'false'
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-      - name: Install Claude CLI (mock for CI)
+
+      - name: Install Claude CLI mock
+        if: steps.check.outputs.skip == 'false'
         run: |
-          # Create a minimal claude mock so the bot can start without real Claude auth
           mkdir -p /usr/local/bin
-          cat > /usr/local/bin/claude << 'EOF'
-          #!/bin/bash
-          echo '{"role":"assistant","content":"CI test response"}'
-          EOF
+          printf '#!/bin/bash\necho '"'"'{"role":"assistant","content":"CI test response"}'"'"'\n' \
+            > /usr/local/bin/claude
           chmod +x /usr/local/bin/claude
 
       - name: Configure .env
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
         run: |
-          cat > .env << EOF
-          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_TEST_TOKEN }}
-          ALLOWED_CHAT_ID=${{ secrets.TELEGRAM_TEST_CHAT_ID }}
-          NODE_ENV=production
-          LOG_LEVEL=info
-          EOF
+          printf 'TELEGRAM_BOT_TOKEN=%s\nALLOWED_CHAT_ID=%s\nNODE_ENV=production\nLOG_LEVEL=info\n' \
+            "$TOKEN" "$CHAT_ID" > .env
           chmod 600 .env
 
       - name: Start bot
+        if: steps.check.outputs.skip == 'false'
         run: |
           mkdir -p store
           node dist/index.js &
@@ -209,39 +229,55 @@ jobs:
           echo "Bot PID: $(cat store/aos.pid)"
 
       - name: E2E — /start command
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
         run: |
           node -e "
-            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+            const r = await fetch('https://api.telegram.org/bot' + process.env.TOKEN + '/sendMessage', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: '/start' })
+              body: JSON.stringify({ chat_id: process.env.CHAT_ID, text: '/start' })
             });
-            console.log('Sent /start:', (await r.json()).ok);
+            const j = await r.json();
+            console.log('Sent /start:', j.ok);
+            if (!j.ok) process.exit(1);
           "
           sleep 5
 
       - name: E2E — /chatid command
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
         run: |
           node -e "
-            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+            const r = await fetch('https://api.telegram.org/bot' + process.env.TOKEN + '/sendMessage', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: '/chatid' })
+              body: JSON.stringify({ chat_id: process.env.CHAT_ID, text: '/chatid' })
             });
-            console.log('Sent /chatid:', (await r.json()).ok);
+            const j = await r.json();
+            console.log('Sent /chatid:', j.ok);
+            if (!j.ok) process.exit(1);
           "
           sleep 5
 
-      - name: E2E — Unauthorized chat rejected
+      - name: E2E — unauthorized chat rejected
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_TEST_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
         run: |
-          FAKE_CHAT="-9999999999"
           node -e "
-            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+            const r = await fetch('https://api.telegram.org/bot' + process.env.TOKEN + '/sendMessage', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: 'unauthorized test' })
+              body: JSON.stringify({ chat_id: '-9999999999', text: 'unauthorized test' })
             });
-            console.log('Auth rejection test sent:', (await r.json()).ok);
+            const j = await r.json();
+            console.log('Unauthorized send attempted (expect ok:false or error):', j.ok);
           "
           sleep 3
 
@@ -251,4 +287,4 @@ jobs:
 
       - name: Stop bot
         if: always()
-        run: kill $(cat store/aos.pid) 2>/dev/null || true
+        run: kill $(cat store/aos.pid 2>/dev/null) 2>/dev/null || true
