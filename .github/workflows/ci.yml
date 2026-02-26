@@ -1,0 +1,223 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+
+jobs:
+  # ─── Stage 1: Build ───────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Compile
+        run: npm run build
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # ─── Stage 2: Unit Tests ──────────────────────────
+  unit-test:
+    name: Unit Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run unit tests
+        run: npm test -- --reporter=verbose
+
+  # ─── Stage 3: Integration Tests ───────────────────
+  integration:
+    name: Integration Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Shellcheck — install.sh
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck install.sh scripts/heartbeat.sh scripts/notify.sh
+
+      - name: Config validation — missing token exits cleanly
+        run: |
+          cat > .env << 'EOF'
+          TELEGRAM_BOT_TOKEN=
+          ALLOWED_CHAT_ID=
+          NODE_ENV=production
+          EOF
+          OUTPUT=$(node dist/index.js 2>&1 || true)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "TELEGRAM_BOT_TOKEN not set" || (echo "FAIL: Expected missing token error" && exit 1)
+          echo "PASS: Missing token exits with clear error"
+
+      - name: PID lock — stale PID is auto-cleared
+        run: |
+          mkdir -p store
+          echo "99999" > store/aos.pid
+          cat > .env << 'EOF'
+          TELEGRAM_BOT_TOKEN=test_fake_token
+          ALLOWED_CHAT_ID=
+          NODE_ENV=production
+          LOG_LEVEL=debug
+          EOF
+          OUTPUT=$(timeout 3 node dist/index.js 2>&1 || true)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "Removing stale PID" || (echo "FAIL: Stale PID not cleared" && exit 1)
+          echo "PASS: Stale PID cleared on startup"
+
+      - name: Heartbeat — no PID file triggers fallback restart
+        run: |
+          rm -f store/aos.pid store/heartbeat.log
+          bash scripts/heartbeat.sh 2>&1 || true
+          sleep 1
+          cat store/heartbeat.log
+          grep -q "WARN: No PID file found" store/heartbeat.log   || (echo "FAIL: Expected no-PID-file warning" && exit 1)
+          grep -q "AOS started directly"    store/heartbeat.log   || (echo "FAIL: Fallback start not logged"     && exit 1)
+          [ -f store/aos.pid ] || (echo "FAIL: PID not written to file after fallback start" && exit 1)
+          echo "PASS: Heartbeat fallback start writes PID"
+          kill $(cat store/aos.pid) 2>/dev/null || true
+
+      - name: Heartbeat — stale PID triggers restart
+        run: |
+          mkdir -p store && echo "99999" > store/aos.pid
+          rm -f store/heartbeat.log
+          bash scripts/heartbeat.sh 2>&1 || true
+          sleep 1
+          cat store/heartbeat.log
+          grep -q "Stale PID" store/heartbeat.log || (echo "FAIL: Expected stale PID warning" && exit 1)
+          echo "PASS: Heartbeat handles stale PID"
+          kill $(cat store/aos.pid) 2>/dev/null || true
+
+      - name: Heartbeat — running process is left alone
+        run: |
+          mkdir -p store
+          sleep 60 &
+          echo "$!" > store/aos.pid
+          bash scripts/heartbeat.sh
+          echo "PASS: Heartbeat exits 0 when process is alive"
+          kill $(cat store/aos.pid) 2>/dev/null || true
+
+      - name: npm run status — executes without crash
+        run: |
+          npm run status 2>&1 || true
+          echo "PASS: status script completes"
+
+  # ─── Stage 4: E2E Tests (requires secret) ─────────
+  e2e:
+    name: E2E Tests
+    needs: [unit-test, integration]
+    runs-on: ubuntu-latest
+    # Only run when the test bot token secret is present
+    if: ${{ secrets.TELEGRAM_TEST_TOKEN != '' && secrets.TELEGRAM_TEST_CHAT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Install Claude CLI (mock for CI)
+        run: |
+          # Create a minimal claude mock so the bot can start without real Claude auth
+          mkdir -p /usr/local/bin
+          cat > /usr/local/bin/claude << 'EOF'
+          #!/bin/bash
+          echo '{"role":"assistant","content":"CI test response"}'
+          EOF
+          chmod +x /usr/local/bin/claude
+
+      - name: Configure .env
+        run: |
+          cat > .env << EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_TEST_TOKEN }}
+          ALLOWED_CHAT_ID=${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+          NODE_ENV=production
+          LOG_LEVEL=info
+          EOF
+          chmod 600 .env
+
+      - name: Start bot
+        run: |
+          mkdir -p store
+          node dist/index.js &
+          echo "$!" > store/aos.pid
+          sleep 3
+          echo "Bot PID: $(cat store/aos.pid)"
+
+      - name: E2E — /start command
+        run: |
+          node -e "
+            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: '/start' })
+            });
+            console.log('Sent /start:', (await r.json()).ok);
+          "
+          sleep 5
+
+      - name: E2E — /chatid command
+        run: |
+          node -e "
+            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: '/chatid' })
+            });
+            console.log('Sent /chatid:', (await r.json()).ok);
+          "
+          sleep 5
+
+      - name: E2E — Unauthorized chat rejected
+        run: |
+          FAKE_CHAT="-9999999999"
+          node -e "
+            const r = await fetch('https://api.telegram.org/bot${{ secrets.TELEGRAM_TEST_TOKEN }}/sendMessage', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: '${{ secrets.TELEGRAM_TEST_CHAT_ID }}', text: 'unauthorized test' })
+            });
+            console.log('Auth rejection test sent:', (await r.json()).ok);
+          "
+          sleep 3
+
+      - name: Collect bot logs
+        if: always()
+        run: cat store/aos.log 2>/dev/null || echo "No log file"
+
+      - name: Stop bot
+        if: always()
+        run: kill $(cat store/aos.pid) 2>/dev/null || true

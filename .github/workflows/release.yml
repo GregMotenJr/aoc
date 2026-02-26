@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.1.0)'
+        required: true
+
+jobs:
+  # ─── Stage 1: Full Test Suite ─────────────────────
+  test:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - name: Unit tests
+        run: npm test
+      - name: Shellcheck
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck install.sh scripts/heartbeat.sh scripts/notify.sh
+      - name: Integration — config validation
+        run: |
+          printf 'TELEGRAM_BOT_TOKEN=\nALLOWED_CHAT_ID=\nNODE_ENV=production\n' > .env
+          OUTPUT=$(node dist/index.js 2>&1 || true)
+          echo "$OUTPUT" | grep -q "TELEGRAM_BOT_TOKEN not set" || (echo "FAIL" && exit 1)
+      - name: Integration — heartbeat PID write
+        run: |
+          mkdir -p store && rm -f store/aos.pid store/heartbeat.log
+          bash scripts/heartbeat.sh 2>&1 || true
+          sleep 1
+          [ -f store/aos.pid ] || (echo "FAIL: PID not written" && exit 1)
+          kill $(cat store/aos.pid) 2>/dev/null || true
+
+  # ─── Stage 2: GitHub Release ──────────────────────
+  release:
+    name: GitHub Release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges)
+          else
+            LOG=$(git log --pretty=format:"- %s" --no-merges | head -20)
+          fi
+          echo "log<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$LOG"      >> "$GITHUB_OUTPUT"
+          echo "EOF"       >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body: |
+            ## What's Changed
+
+            ${{ steps.changelog.outputs.log }}
+
+            ---
+
+            ## Install
+
+            **Linux / macOS / WSL:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.sh | bash
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            irm https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.ps1 | iex
+            ```
+          draft: false
+          prerelease: false
+
+  # ─── Stage 3: npm Publish ─────────────────────────
+  publish:
+    name: Publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Check if version already published
+        id: version_check
+        run: |
+          LOCAL=$(node -p "require('./package.json').version")
+          REMOTE=$(npm view alfred-os version 2>/dev/null || echo "0.0.0")
+          echo "local=$LOCAL" >> "$GITHUB_OUTPUT"
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.version_check.outputs.changed == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Already published
+        if: steps.version_check.outputs.changed == 'false'
+        run: echo "v${{ steps.version_check.outputs.local }} already on npm — skipping"
