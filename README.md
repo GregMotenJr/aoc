@@ -25,17 +25,22 @@ AOS spawns the real `claude` CLI as a subprocess — not an API wrapper. You get
 ```bash
 git clone https://github.com/GregMotenJr/aoc.git aos
 cd aos
+./install.sh
+```
+
+That's it. The installer walks you through everything — dependencies, configuration, building, and setting up the background service.
+
+<details>
+<summary>Manual setup (advanced)</summary>
+
+```bash
 npm install
-
-# Interactive setup (configures .env, builds, installs systemd service)
-npm run setup
-
-# Or manual setup:
 cp .env.example .env
 # Edit .env with your tokens
 npm run build
 npm start
 ```
+</details>
 
 ## Configuration
 
@@ -87,7 +92,6 @@ Advanced tuning (all optional with sensible defaults):
 |---------|-------------|
 | `npm start` | Run the bot (production) |
 | `npm run dev` | Run in development mode (pretty logs) |
-| `npm run setup` | Interactive setup wizard |
 | `npm run status` | System health check |
 | `npm run schedule` | Manage scheduled tasks via CLI |
 | `npm test` | Run test suite (70 tests) |
@@ -97,26 +101,28 @@ Advanced tuning (all optional with sensible defaults):
 ## Architecture
 
 ```
+install.sh             One-command installer (deps, config, build, service)
+
 src/
-├── index.ts         Entry point + lifecycle (signal handling, graceful shutdown)
-├── agent.ts         Claude Code SDK wrapper (query, session resume, usage tracking)
-├── bot.ts           Telegram bot (grammY) — commands, media handlers, Markdown→HTML formatter
-├── config.ts        Typed configuration from .env (paths, keys, tuning constants)
-├── db.ts            SQLite schema + CRUD (sessions, memories w/ FTS5, scheduled tasks)
-├── env.ts           Safe .env parser (never pollutes process.env)
-├── logger.ts        Pino structured logging (pretty in dev, JSON in prod)
-├── media.ts         Telegram file download, upload cleanup, message builders
-├── memory.ts        Dual-sector memory engine (semantic/episodic, FTS5 search, salience decay)
-├── scheduler.ts     Cron-based task polling with 3-strike auto-disable
-├── schedule-cli.ts  CLI interface for scheduled task management
-├── security.ts      Chat ID auth, outbound secret redaction, PID lock
-└── voice.ts         STT (Groq Whisper) + TTS (ElevenLabs)
+├── index.ts           Entry point + lifecycle (signal handling, graceful shutdown)
+├── agent.ts           Claude Code SDK wrapper (query, session resume, usage tracking)
+├── bot.ts             Telegram bot (grammY) — commands, media handlers, Markdown→HTML formatter
+├── config.ts          Typed configuration from .env (paths, keys, tuning constants)
+├── db.ts              SQLite schema + CRUD (sessions, memories w/ FTS5, scheduled tasks)
+├── env.ts             Safe .env parser (never pollutes process.env)
+├── logger.ts          Pino structured logging (pretty in dev, JSON in prod)
+├── media.ts           Telegram file download, upload cleanup, message builders
+├── memory.ts          Dual-sector memory engine (semantic/episodic, FTS5 search, salience decay)
+├── scheduler.ts       Cron-based task polling with 3-strike auto-disable
+├── schedule-cli.ts    CLI interface for scheduled task management
+├── security.ts        Chat ID auth, outbound secret redaction, PID lock
+└── voice.ts           STT (Groq Whisper) + TTS (ElevenLabs)
 
 scripts/
-├── setup.ts         Interactive setup wizard (config, build, systemd install)
-├── status.ts        System health check (Node, Claude CLI, .env, DB, process)
-├── heartbeat.sh     Cron-based process monitor with auto-restart
-└── notify.sh        Send Telegram messages from shell scripts
+├── setup.ts           Interactive setup wizard (used by install.sh)
+├── status.ts          System health check (Node, Claude CLI, .env, DB, process)
+├── heartbeat.sh       Cron-based process monitor with auto-restart
+└── notify.sh          Send Telegram messages from shell scripts
 ```
 
 ## Memory System
