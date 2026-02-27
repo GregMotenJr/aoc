@@ -2,6 +2,7 @@
 
 import { execSync, spawnSync, spawn } from 'node:child_process';
 import {
+  closeSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -333,7 +334,6 @@ ${restartNote}
 
 function getProjectDir(): string {
   const cwd = process.cwd();
-  const pidFile = join(cwd, 'store', 'aos.pid');
   const distIndex = join(cwd, 'dist', 'index.js');
 
   if (!existsSync(distIndex)) {
@@ -404,6 +404,23 @@ function start(): void {
     cwd: projectDir,
     detached: true,
     stdio: ['ignore', logFd, errorFd],
+  });
+
+  // Close parent's copies of the file descriptors — child has inherited them
+  closeSync(logFd);
+  closeSync(errorFd);
+
+  // Guard against spawn failure (e.g. node not found)
+  if (!child.pid) {
+    child.on('error', (err) => {
+      fail(`Failed to start AOS: ${err.message}`);
+    });
+    fail('AOS failed to start — process PID unavailable');
+    return;
+  }
+
+  child.on('error', (err) => {
+    console.error(`${RED}✗${RESET} AOS process error: ${err.message}`);
   });
 
   writeFileSync(join(storeDir, 'aos.pid'), String(child.pid));
@@ -537,7 +554,7 @@ function status(): void {
     const lastLines = lines.slice(-10);
 
     console.log(`\n${BOLD}Last 10 log lines:${RESET}\n`);
-    lastLines.forEach((line) => console.log('  ' + line));
+    lastLines.forEach((line) => { console.log('  ' + line); });
   }
 
   console.log();
@@ -601,10 +618,13 @@ switch (command) {
   case 'version':
   case '--version':
   case '-v': {
-    // Read version from package.json at the package root
-    const pkgPath = join(PACKAGE_ROOT, 'package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
-    console.log(`aos v${pkg.version}`);
+    try {
+      const pkgPath = join(PACKAGE_ROOT, 'package.json');
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
+      console.log(`aos v${pkg.version ?? 'unknown'}`);
+    } catch {
+      console.log('aos vunknown');
+    }
     break;
   }
   case 'help':

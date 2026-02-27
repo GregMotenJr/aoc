@@ -115,7 +115,8 @@ if (-not $skipClone) {
       Expand-Archive -Path $zipFile -DestinationPath $env:TEMP -Force
       
       $extracted = Join-Path $env:TEMP "aoc-dev"
-      Copy-Item -Path "$extracted\*" -Destination $InstallDir -Recurse -Force
+      # Use Get-ChildItem -Force to include hidden files (.env.example, .gitignore, etc.)
+      Get-ChildItem -Path $extracted -Force | Copy-Item -Destination $InstallDir -Recurse -Force
       Remove-Item -Path $zipFile -Force
       Remove-Item -Path $extracted -Recurse -Force
       
