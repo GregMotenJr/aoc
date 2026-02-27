@@ -373,7 +373,11 @@ function start(): void {
 
   if (!existsSync(distIndex)) {
     console.log('Building first...');
-    run('npm', ['run', 'build'], { cwd: projectDir });
+    const buildResult = run('npm', ['run', 'build'], { cwd: projectDir, stdio: 'inherit' });
+    if (buildResult.status !== 0) {
+      fail('Build failed — cannot start AOS');
+      return;
+    }
   }
 
   console.log(`Starting AOS from ${projectDir}...`);
@@ -409,13 +413,13 @@ function start(): void {
   console.log(`Logs: tail -f ${logFile}`);
 }
 
-function stop(): void {
+function stop(): boolean {
   const projectDir = getProjectDir();
   const pid = getPid();
 
   if (!pid) {
     warn('AOS is not running');
-    process.exit(0);
+    return false;
   }
 
   try {
@@ -429,8 +433,10 @@ function stop(): void {
     } catch {
       // Ignore
     }
+    return true;
   } catch (err) {
     fail(`Could not stop process: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 
@@ -445,12 +451,26 @@ function logs(): void {
 
   console.log(`Following logs from ${logFile}. Press Ctrl+C to stop.\n`);
 
-  if (IS_WINDOWS) {
-    // Use PowerShell to tail on Windows
-    spawnSync('powershell', ['-Command', `Get-Content "${logFile}" -Wait`], { stdio: 'inherit' });
-  } else {
-    // Use tail on Unix-like systems
-    spawnSync('tail', ['-f', logFile], { stdio: 'inherit' });
+  // Try native tail first; fall back to Node-based polling follower
+  const tailCmd = IS_WINDOWS
+    ? spawnSync('powershell', ['-Command', `Get-Content "${logFile}" -Wait`], { stdio: 'inherit' })
+    : spawnSync('tail', ['-f', logFile], { stdio: 'inherit' });
+
+  if (tailCmd.error || tailCmd.status !== 0) {
+    warn(`Native tail unavailable (${tailCmd.error?.message ?? `exit ${tailCmd.status}`}) — using built-in follower`);
+    // Node-based fallback: print existing content then poll for new lines
+    let offset = 0;
+    const printNew = () => {
+      const content = readFileSync(logFile, 'utf-8');
+      const newContent = content.slice(offset);
+      if (newContent) {
+        process.stdout.write(newContent);
+        offset = content.length;
+      }
+    };
+    printNew(); // print existing lines first
+    setInterval(printNew, 500);
+    process.stdin.resume(); // keep process alive until Ctrl+C
   }
 }
 
@@ -477,7 +497,7 @@ function update(): void {
 
   ok('Update complete');
   console.log('Restarting AOS...');
-  stop();
+  stop(); // returns false if not running — that's fine, start() runs either way
   start();
 }
 
@@ -489,7 +509,23 @@ function status(): void {
   console.log(`\n${BOLD}AOS Status${RESET}\n`);
 
   if (pid) {
-    console.log(`${GREEN}●${RESET} Running (PID ${pid})`);
+    let uptimeStr = '';
+    try {
+      // Cross-platform uptime: use ps to get elapsed time
+      const psResult = spawnSync(
+        IS_WINDOWS ? 'wmic' : 'ps',
+        IS_WINDOWS
+          ? ['process', 'where', `ProcessId=${pid}`, 'get', 'CreationDate', '/value']
+          : ['-p', String(pid), '-o', 'etime='],
+        { encoding: 'utf-8' },
+      );
+      if (psResult.status === 0 && psResult.stdout) {
+        uptimeStr = ` — up ${psResult.stdout.trim()}`;
+      }
+    } catch {
+      // uptime unavailable — skip
+    }
+    console.log(`${GREEN}●${RESET} Running (PID ${pid}${uptimeStr})`);
   } else {
     console.log(`${YELLOW}●${RESET} Not running`);
   }
@@ -562,6 +598,15 @@ switch (command) {
   case 'update':
     update();
     break;
+  case 'version':
+  case '--version':
+  case '-v': {
+    // Read version from package.json at the package root
+    const pkgPath = join(PACKAGE_ROOT, 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
+    console.log(`aos v${pkg.version}`);
+    break;
+  }
   case 'help':
   case '--help':
   case '-h':

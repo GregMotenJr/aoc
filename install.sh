@@ -146,7 +146,8 @@ if [ "$SKIP_CLONE" = "0" ]; then
     
     if command -v unzip &>/dev/null; then
       unzip -q "$ZIP_FILE" -d /tmp
-      mv /tmp/aoc-dev/* "$INSTALL_DIR/"
+      (shopt -s dotglob; mv /tmp/aoc-dev/* "$INSTALL_DIR/")
+      rm -rf /tmp/aoc-dev
       rm -f "$ZIP_FILE"
     else
       fail "unzip not found. Please install it and try again."
@@ -281,17 +282,9 @@ UPDATE_SHELL_CONFIG() {
   fi
 }
 
-if [ -f "$HOME/.bashrc" ]; then
-  UPDATE_SHELL_CONFIG "$HOME/.bashrc"
-fi
-
-if [ -f "$HOME/.zshrc" ]; then
-  UPDATE_SHELL_CONFIG "$HOME/.zshrc"
-fi
-
-if [ -f "$HOME/.profile" ]; then
-  UPDATE_SHELL_CONFIG "$HOME/.profile"
-fi
+UPDATE_SHELL_CONFIG "$HOME/.bashrc"
+UPDATE_SHELL_CONFIG "$HOME/.zshrc"
+UPDATE_SHELL_CONFIG "$HOME/.profile"
 
 warn "Shell configuration updated — you may need to restart your terminal"
 

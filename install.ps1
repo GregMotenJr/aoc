@@ -100,6 +100,9 @@ if (-not $skipClone) {
   # Try to git clone; fall back to downloading zip
   try {
     git clone --branch dev https://github.com/GregMotenJr/aoc.git $InstallDir 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "git clone exited with code $LASTEXITCODE"
+    }
     ok "Repository cloned"
   } catch {
     Write-Host "  Git not available or clone failed. Downloading instead..." -ForegroundColor Yellow
@@ -165,6 +168,13 @@ if (-not $skipEnv) {
   }
 
   Write-Host ""
+  Write-Host "  Start your bot on Telegram, send it /chatid, and paste the number below." -ForegroundColor White
+  $allowedChatId = ask "  Your Telegram chat ID (required)"
+  if ([string]::IsNullOrWhiteSpace($allowedChatId)) {
+    fail "ALLOWED_CHAT_ID is required. Start your bot, send /chatid, and paste the result."
+  }
+
+  Write-Host ""
   Write-Host "  Optional features (press Enter to skip any):" -ForegroundColor White
   Write-Host ""
 
@@ -183,8 +193,7 @@ if (-not $skipEnv) {
 TELEGRAM_BOT_TOKEN=$botToken
 
 # Your Telegram chat ID
-# After starting the bot, send /chatid to it and paste the number here
-ALLOWED_CHAT_ID=
+ALLOWED_CHAT_ID=$allowedChatId
 
 # Voice transcription (Groq Whisper) — optional
 GROQ_API_KEY=$groqKey
@@ -228,7 +237,11 @@ New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 $aosCmdContent = @"
 @echo off
 REM AOS Global Command Wrapper
+PUSHD "$InstallDir"
 node "$InstallDir\dist\cli.js" %*
+SET _EXIT=%ERRORLEVEL%
+POPD
+EXIT /B %_EXIT%
 "@
 
 $aosCmdContent | Set-Content -Path (Join-Path $BinDir "aos.cmd") -Encoding ASCII

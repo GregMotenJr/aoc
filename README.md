@@ -39,7 +39,7 @@ Then from **any terminal** (after restart):
 aos start
 
 # Send /chatid to your bot on Telegram
-# Copy the ID and set it in ~/.env (or %LOCALAPPDATA%\Programs\AOS\.env on Windows)
+# Copy the ID and set it in ~/.local/share/aos/.env (or %LOCALAPPDATA%\Programs\AOS\.env on Windows)
 # ALLOWED_CHAT_ID=<your_chat_id>
 
 # Restart
