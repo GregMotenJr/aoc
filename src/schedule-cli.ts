@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from 'node:crypto';
-import { initDatabase, createTask, listTasks, deleteTask, pauseTask, resumeTask } from './db.js';
+import { initDatabase, createTask, listTasks, deleteTask, pauseTask, resumeTask, getTask } from './db.js';
 import { computeNextRun, isValidCron } from './scheduler.js';
 
 const args = process.argv.slice(2);
@@ -121,14 +121,16 @@ function run(): void {
 
     case 'resume': {
       const taskId = args[1];
-      const cron = args[2]; // optional cron to recalculate next run
       if (!taskId) {
         console.error('Error: resume requires <task_id>');
         process.exit(1);
       }
-      // We need the cron to compute next run — fetch from DB would be ideal
-      // For now, use a default of "next minute"
-      const nextRun = Math.floor(Date.now() / 1000) + 60;
+      const task = getTask(taskId);
+      if (!task) {
+        console.error(`Task ${taskId} not found.`);
+        process.exit(1);
+      }
+      const nextRun = computeNextRun(task.schedule) ?? Math.floor(Date.now() / 1000) + 60;
       resumeTask(taskId, nextRun);
       console.log(`Task ${taskId} resumed. Next run: ${formatDate(nextRun)}`);
       break;
