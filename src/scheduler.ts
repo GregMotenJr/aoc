@@ -37,6 +37,8 @@ export function computeNextRun(cronExpression: string): number | null {
  * Validate a cron expression. Returns true if valid.
  */
 export function isValidCron(cronExpression: string): boolean {
+  if (!cronExpression.trim()) return false;
+  if (cronExpression.trim().split(/\s+/).length !== 5) return false;
   try {
     parseExpression(cronExpression);
     return true;
