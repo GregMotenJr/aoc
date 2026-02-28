@@ -2,7 +2,7 @@
 # AOS Installer — One command, fully running bot
 # ═══════════════════════════════════════════════════
 #
-# Run from PowerShell (as Administrator for Task Scheduler):
+# Run from PowerShell (as Administrator recommended):
 #   irm https://raw.githubusercontent.com/GregMotenJr/aoc/master/install.ps1 | iex
 #
 # Or from a cloned repo:
@@ -14,10 +14,6 @@ function ok   { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
 function warn { param($msg) Write-Host "⚠ $msg" -ForegroundColor Yellow }
 function fail { param($msg) Write-Host "✗ $msg" -ForegroundColor Red; exit 1 }
 function ask  { param($prompt) Read-Host $prompt }
-
-$ProjectRoot = $PSScriptRoot
-if (-not $ProjectRoot) { $ProjectRoot = Get-Location }
-Set-Location $ProjectRoot
 
 Write-Host ""
 Write-Host "╔═══════════════════════════════════════╗" -ForegroundColor Cyan
@@ -72,15 +68,78 @@ try {
   }
 }
 
-# ─── Step 2: Install dependencies ─────────────────
+# ─── Step 2: Determine install location ───────────
+
+$InstallDir = Join-Path $env:LOCALAPPDATA "Programs\AOS"
+$BinDir = Join-Path $InstallDir "bin"
+
+Write-Host ""
+Write-Host "Install location: $InstallDir" -ForegroundColor White
+Write-Host ""
+
+# ─── Step 3: Clone or copy repo ────────────────────
+
+Write-Host "Setting up project..." -ForegroundColor White
+Write-Host ""
+
+if (Test-Path $InstallDir) {
+  Write-Host "  Existing AOS installation found." -ForegroundColor Yellow
+  $answer = ask "  Reinstall? (y/N)"
+  if ($answer -notmatch '^[Yy]') {
+    ok "Keeping existing installation"
+    $skipClone = $true
+  } else {
+    Remove-Item -Recurse -Force $InstallDir
+    $skipClone = $false
+  }
+} else {
+  $skipClone = $false
+}
+
+if (-not $skipClone) {
+  # Try to git clone; fall back to downloading zip
+  try {
+    git clone --branch dev https://github.com/GregMotenJr/aoc.git $InstallDir 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "git clone exited with code $LASTEXITCODE"
+    }
+    ok "Repository cloned"
+  } catch {
+    Write-Host "  Git not available or clone failed. Downloading instead..." -ForegroundColor Yellow
+    try {
+      New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+      $zipUrl = "https://github.com/GregMotenJr/aoc/archive/refs/heads/dev.zip"
+      $zipFile = [System.IO.Path]::GetTempFileName() + ".zip"
+      
+      Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing
+      Expand-Archive -Path $zipFile -DestinationPath $env:TEMP -Force
+      
+      $extracted = Join-Path $env:TEMP "aoc-dev"
+      # Use Get-ChildItem -Force to include hidden files (.env.example, .gitignore, etc.)
+      Get-ChildItem -Path $extracted -Force | Copy-Item -Destination $InstallDir -Recurse -Force
+      Remove-Item -Path $zipFile -Force
+      Remove-Item -Path $extracted -Recurse -Force
+      
+      ok "Repository downloaded and extracted"
+    } catch {
+      fail "Could not clone or download repository: $_"
+    }
+  }
+}
+
+# ─── Step 4: Install dependencies ─────────────────
 
 Write-Host ""
 Write-Host "Installing dependencies..." -ForegroundColor White
 Write-Host ""
+Set-Location $InstallDir
 npm install --no-fund --no-audit
+if ($LASTEXITCODE -ne 0) {
+  fail "npm install failed"
+}
 ok "Dependencies installed"
 
-# ─── Step 3: Configure .env ───────────────────────
+# ─── Step 5: Configure .env ───────────────────────
 
 Write-Host ""
 Write-Host "Configuration" -ForegroundColor White
@@ -110,6 +169,13 @@ if (-not $skipEnv) {
   }
 
   Write-Host ""
+  Write-Host "  Start your bot on Telegram, send it /chatid, and paste the number below." -ForegroundColor White
+  $allowedChatId = ask "  Your Telegram chat ID (required)"
+  if ([string]::IsNullOrWhiteSpace($allowedChatId)) {
+    fail "ALLOWED_CHAT_ID is required. Start your bot, send /chatid, and paste the result."
+  }
+
+  Write-Host ""
   Write-Host "  Optional features (press Enter to skip any):" -ForegroundColor White
   Write-Host ""
 
@@ -128,8 +194,7 @@ if (-not $skipEnv) {
 TELEGRAM_BOT_TOKEN=$botToken
 
 # Your Telegram chat ID
-# After starting the bot, send /chatid to it and paste the number here
-ALLOWED_CHAT_ID=
+ALLOWED_CHAT_ID=$allowedChatId
 
 # Voice transcription (Groq Whisper) — optional
 GROQ_API_KEY=$groqKey
@@ -150,62 +215,51 @@ NODE_ENV=production
   ok ".env configured"
 }
 
-# ─── Step 4: Build ────────────────────────────────
+# ─── Step 6: Build ────────────────────────────────
 
 Write-Host ""
 Write-Host "Building..." -ForegroundColor White
 Write-Host ""
 npm run build
+if ($LASTEXITCODE -ne 0) {
+  fail "Build failed"
+}
 ok "TypeScript compiled"
 
-# ─── Step 5: Background service (Task Scheduler) ──
+# ─── Step 7: Create global aos command ────────────
 
 Write-Host ""
-Write-Host "Setting up background service..." -ForegroundColor White
+Write-Host "Creating global aos command..." -ForegroundColor White
 Write-Host ""
 
-$serviceOk = $false
-$nodePath   = (Get-Command node).Source
-$scriptPath = Join-Path $ProjectRoot "dist\index.js"
-$taskName   = "AOS-Alfred"
+New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
-try {
-  $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator
+# Create aos.cmd wrapper
+$aosCmdContent = @"
+@echo off
+REM AOS Global Command Wrapper
+PUSHD "$InstallDir"
+node "$InstallDir\dist\cli.js" %*
+SET _EXIT=%ERRORLEVEL%
+POPD
+EXIT /B %_EXIT%
+"@
+
+$aosCmdContent | Set-Content -Path (Join-Path $BinDir "aos.cmd") -Encoding ASCII
+ok "aos.cmd created"
+
+# Add bin directory to User PATH
+$userPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+if (-not ($userPath -split ';' | Where-Object { $_ -eq $BinDir })) {
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    "$userPath;$BinDir",
+    [EnvironmentVariableTarget]::User
   )
-
-  if ($isAdmin) {
-    # Register as a scheduled task that runs at logon
-    $action   = New-ScheduledTaskAction -Execute $nodePath -Argument $scriptPath -WorkingDirectory $ProjectRoot
-    $trigger  = New-ScheduledTaskTrigger -AtLogon
-    $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Limited
-
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-      -Settings $settings -Principal $principal -Force | Out-Null
-
-    ok "Task Scheduler service registered (auto-starts at login)"
-    $serviceOk = $true
-  } else {
-    warn "Not running as Administrator — skipping Task Scheduler setup."
-    Write-Host "  To register as a background service, re-run as Administrator." -ForegroundColor Yellow
-  }
-} catch {
-  warn "Could not register Task Scheduler task: $_"
-}
-
-# ─── Step 6: Heartbeat (Scheduled Task, every 10 min) ─
-
-if ($serviceOk) {
-  try {
-    $hbScript  = Join-Path $ProjectRoot "scripts\heartbeat.ps1"
-    $hbAction  = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NonInteractive -File `"$hbScript`""
-    $hbTrigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 9999) -Once -At (Get-Date)
-    Register-ScheduledTask -TaskName "AOS-Heartbeat" -Action $hbAction -Trigger $hbTrigger -Force | Out-Null
-    ok "Heartbeat monitor registered (checks every 10 minutes)"
-  } catch {
-    warn "Could not register heartbeat task (non-critical)"
-  }
+  ok "Added $BinDir to User PATH"
+  Write-Host "  (You may need to restart your terminal for the change to take effect)" -ForegroundColor Yellow
+} else {
+  ok "PATH already configured"
 }
 
 # ─── Done ─────────────────────────────────────────
@@ -217,31 +271,24 @@ Write-Host "══════════════════════�
 Write-Host ""
 Write-Host "  What to do now:" -ForegroundColor White
 Write-Host ""
-
-if ($serviceOk) {
-  Write-Host "  1. Start the bot:"
-  Write-Host "     Start-ScheduledTask -TaskName '$taskName'" -ForegroundColor Cyan
-} else {
-  Write-Host "  1. Start the bot:"
-  Write-Host "     npm start" -ForegroundColor Cyan
-}
-
+Write-Host "  1. Start the bot:"
+Write-Host "     aos start" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  2. Open Telegram and send /chatid to your bot"
 Write-Host ""
 Write-Host "  3. Copy the chat ID and add it to .env:"
 Write-Host "     ALLOWED_CHAT_ID=<your_chat_id>" -ForegroundColor Cyan
 Write-Host ""
-
-if ($serviceOk) {
-  Write-Host "  4. Restart the bot:"
-  Write-Host "     Stop-ScheduledTask -TaskName '$taskName'; Start-ScheduledTask -TaskName '$taskName'" -ForegroundColor Cyan
-} else {
-  Write-Host "  4. Restart the bot: Ctrl+C, then npm start"
-}
-
+Write-Host "  4. Restart the bot:"
+Write-Host "     aos stop && aos start" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  5. Customize CLAUDE.md with your AI's personality"
+Write-Host "  5. Check status:"
+Write-Host "     aos status" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  6. Send a message — you're live!"
+Write-Host "  6. View live logs:"
+Write-Host "     aos logs" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  7. Customize CLAUDE.md with your AI's personality"
+Write-Host ""
+Write-Host "  8. Send a message — you're live!"
 Write-Host ""
